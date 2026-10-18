@@ -1,4 +1,4 @@
--- PudimHub Dragon Adventures v016 | revisão do script enviado
+-- PudimHub Dragon Adventures v017 | revisão do script enviado
 -- Interações dependem dos objetos carregados e das funções do executor.
 if not game:IsLoaded() then game.Loaded:Wait() end
 local env = (type(getgenv) == "function" and getgenv()) or _G
@@ -82,6 +82,26 @@ local Cache = { Mobs = {}, Eggs = {}, Resources = {}, Chests = {} }
 local ESP_Storage = {} 
 
 
+
+
+Configs.MobPriority="Mais próximo"
+Configs.MobFilter=""
+Configs.ToolName=""
+Configs.FarmPosition="Acima"
+Configs.AttackMode="Ferramenta"
+Configs.AutoEquip=false
+Configs.FarmRadius=1500
+Configs.AttackInterval=250
+Configs.StallTimeout=15
+Configs.CollectRetries=3
+Configs.CollectWait=4
+Configs.RetryCooldown=20
+Configs.TravelSpeed=100
+Configs.EspDistance=1500
+Configs.EspLimit=25
+Configs.EspThroughWalls=true
+Configs.EspHighlight=true
+
 local Refresh = {}
 local movementKeys = {"AutoRiding", "AutoFarm", "AutoEgg", "AutoChest", "AutoCollect", "Fly"}
 local function CancelMove()
@@ -122,180 +142,214 @@ local function StopAll()
     for _, refresh in pairs(Refresh) do refresh() end
 end
 
--- // UI LIBRARY
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "PudimHub_DA_v016"
-ScreenGui.Parent = Player:WaitForChild("PlayerGui")
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 50
+-- HUD v017: páginas, telemetria e controles de mouse/toque.
+local function New(class, parent, props)
+    local object = Instance.new(class)
+    for key, value in pairs(props or {}) do object[key] = value end
+    object.Parent = parent
+    return object
+end
+local function Round(object, radius)
+    New("UICorner", object, {CornerRadius = UDim.new(0, radius or 10)})
+    return object
+end
+local function Text(parent, text, size, position, dimensions, color)
+    return New("TextLabel", parent, {Text = text, TextSize = size or 13, Position = position or UDim2.new(),
+        Size = dimensions or UDim2.fromScale(1,1), BackgroundTransparency = 1, TextColor3 = color or Theme.Text,
+        Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd})
+end
+local ScreenGui = New("ScreenGui", Player:WaitForChild("PlayerGui"), {Name = "PudimHub_DA_v017", ResetOnSpawn = false, DisplayOrder = 50, ZIndexBehavior = Enum.ZIndexBehavior.Sibling})
 Session.Gui = ScreenGui
-
-local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 550, 0, 350)
-MainFrame.Position = UDim2.new(0.5, -275, 0.5, -175)
-MainFrame.BackgroundColor3 = Theme.Background
-MainFrame.BorderSizePixel = 0
-MainFrame.ClipsDescendants = true
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
-
--- Top Bar
-local TopBar = Instance.new("Frame", MainFrame)
-TopBar.Size = UDim2.new(1, 0, 0, 40)
-TopBar.BackgroundColor3 = Theme.Sidebar
-Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 10)
-
-local Title = Instance.new("TextLabel", TopBar)
-Title.Text = "PudimHub • Dragon Adventures v016"
-Title.RichText = true
-Title.Size = UDim2.new(1, -190, 1, 0)
-Title.Position = UDim2.new(0, 15, 0, 0)
-Title.BackgroundTransparency = 1
-Title.TextColor3 = Theme.Accent
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
-
--- Arrastar UI
-local dragging, dragInput, dragStart, startPos
-Connect(TopBar.InputBegan, function(input) if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then dragging = true; dragInput = input; dragStart = input.Position; startPos = MainFrame.Position end end)
-Connect(TopBar.InputEnded, function(input) if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then dragging = false end end)
-Connect(UserInputService.InputChanged, function(input) if (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then dragInput = input end end)
-Connect(RunService.RenderStepped, function() if dragging and dragInput then local delta = dragInput.Position - dragStart; MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
-
-local CloseBtn = Instance.new("TextButton", TopBar)
-CloseBtn.Size = UDim2.new(0, 30, 0, 30); CloseBtn.Position = UDim2.new(1, -35, 0, 5); CloseBtn.BackgroundTransparency = 1; CloseBtn.Text = "X"; CloseBtn.TextColor3 = Theme.Accent; CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 18
-Connect(CloseBtn.MouseButton1Click, function() MainFrame.Visible = false end)
-
--- Tabs
-local TabContainer = Instance.new("Frame", MainFrame)
-TabContainer.Size = UDim2.new(0, 130, 1, -40); TabContainer.Position = UDim2.new(0, 0, 0, 40); TabContainer.BackgroundColor3 = Theme.Sidebar
-Instance.new("UICorner", TabContainer).CornerRadius = UDim.new(0, 10)
-local TabList = Instance.new("UIListLayout", TabContainer); TabList.Padding = UDim.new(0, 5); TabList.HorizontalAlignment = Enum.HorizontalAlignment.Center; TabList.SortOrder = Enum.SortOrder.LayoutOrder
-Instance.new("UIPadding", TabContainer).PaddingTop = UDim.new(0, 10)
-
-local ContentContainer = Instance.new("Frame", MainFrame)
-ContentContainer.Size = UDim2.new(1, -140, 1, -50); ContentContainer.Position = UDim2.new(0, 135, 0, 45); ContentContainer.BackgroundTransparency = 1
-
-local Tabs = {}
-local function CreateTab(name)
-    local TabButton = Instance.new("TextButton", TabContainer)
-    TabButton.Size = UDim2.new(0.9, 0, 0, 35); TabButton.BackgroundColor3 = Theme.Background; TabButton.Text = name; TabButton.TextColor3 = Theme.Text; TabButton.Font = Enum.Font.GothamSemibold; TabButton.TextSize = 14
-    Instance.new("UICorner", TabButton).CornerRadius = UDim.new(0, 6)
-    local Page = Instance.new("ScrollingFrame", ContentContainer)
-    Page.Size = UDim2.new(1, 0, 1, 0); Page.BackgroundTransparency = 1; Page.Visible = false; Page.ScrollBarThickness = 2; Page.ScrollBarImageColor3 = Theme.Accent; Page.AutomaticCanvasSize = Enum.AutomaticSize.Y; Page.CanvasSize = UDim2.new()
-    local PageLayout = Instance.new("UIListLayout", Page); PageLayout.Padding = UDim.new(0, 8); PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    Connect(TabButton.MouseButton1Click, function() for _, t in pairs(Tabs) do t.Page.Visible = false; t.Btn.BackgroundColor3 = Theme.Background; t.Btn.TextColor3 = Theme.Text end; Page.Visible = true; TabButton.BackgroundColor3 = Theme.Accent; TabButton.TextColor3 = Color3.new(0,0,0) end)
-    table.insert(Tabs, {Btn = TabButton, Page = Page})
-    return Page
+local MainFrame = Round(New("Frame", ScreenGui, {Size = UDim2.fromOffset(740, 490), AnchorPoint = Vector2.new(0.5,0.5),
+    Position = UDim2.fromScale(0.5,0.5), BackgroundColor3 = Color3.fromRGB(12,17,23), BorderSizePixel = 0, ClipsDescendants = true}), 14)
+New("UIStroke", MainFrame, {Color = Color3.fromRGB(48,68,70), Thickness = 1})
+local scale = New("UIScale", MainFrame)
+local TopBar = New("Frame", MainFrame, {Size = UDim2.new(1,0,0,62), BackgroundColor3 = Color3.fromRGB(17,26,32), BorderSizePixel = 0})
+Text(TopBar, "PUDIM", 22, UDim2.fromOffset(20,10), UDim2.fromOffset(78,28), Theme.Accent)
+Text(TopBar, "HUB", 22, UDim2.fromOffset(101,10), UDim2.fromOffset(60,28))
+Text(TopBar, "DRAGON ADVENTURES  /  v017", 10, UDim2.fromOffset(21,39), UDim2.fromOffset(300,16), Color3.fromRGB(140,162,173))
+local function Button(parent, label, position, size, callback, color)
+    local b = Round(New("TextButton", parent, {Text = label, Position = position, Size = size, BackgroundColor3 = color or Theme.Element,
+        TextColor3 = Theme.Text, TextSize = 12, Font = Enum.Font.GothamBold, AutoButtonColor = true, BorderSizePixel = 0}), 7)
+    Connect(b.Activated, callback)
+    return b
 end
-
-local function CreateToggle(parent, text, configKey, callback)
-    local button = Instance.new("TextButton", parent)
-    button.Size = UDim2.new(1, -10, 0, 40)
-    button.Font = Enum.Font.GothamSemibold
-    button.TextSize = 13
-    button.TextColor3 = Theme.Text
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
-    Refresh[configKey] = function()
-        button.Text = text .. (Configs[configKey] and "  [ON]" or "  [OFF]")
-        button.BackgroundColor3 = Configs[configKey] and Color3.fromRGB(20, 90, 65) or Theme.Element
+Button(TopBar, "PARAR TUDO", UDim2.new(1,-255,0,17), UDim2.fromOffset(115,30), function() StopAll() end, Color3.fromRGB(109,42,51))
+Button(TopBar, "—", UDim2.new(1,-130,0,17), UDim2.fromOffset(35,30), function() MainFrame.Visible = false end)
+Button(TopBar, "SAIR", UDim2.new(1,-85,0,17), UDim2.fromOffset(65,30), function() Session.Destroy() end)
+local sidebar = New("Frame", MainFrame, {Position = UDim2.fromOffset(0,62), Size = UDim2.new(0,162,1,-62), BackgroundColor3 = Color3.fromRGB(16,23,30), BorderSizePixel = 0})
+Text(sidebar, "CONTROLE", 10, UDim2.fromOffset(18,18), UDim2.fromOffset(130,20), Color3.fromRGB(116,139,151))
+Text(sidebar, "H  painel   •   G  voo", 10, UDim2.new(0,16,1,-30), UDim2.fromOffset(140,18), Color3.fromRGB(116,139,151))
+local ContentContainer = New("Frame", MainFrame, {Position = UDim2.fromOffset(178,78), Size = UDim2.new(1,-194,1,-145), BackgroundTransparency = 1})
+local footer = New("Frame", MainFrame, {Position = UDim2.new(0,162,1,-56), Size = UDim2.new(1,-162,0,56), BackgroundColor3 = Color3.fromRGB(17,26,32), BorderSizePixel = 0})
+local status = Text(footer, "Pronto para iniciar", 12, UDim2.fromOffset(15,9), UDim2.new(1,-30,0,19), Theme.Accent)
+local substatus = Text(footer, "Escolha um farm na barra lateral", 10, UDim2.fromOffset(15,30), UDim2.new(1,-30,0,16), Color3.fromRGB(140,162,173))
+local Pages, SelectedPage = {}, nil
+local function Page(label, subtitle)
+    local index = #Pages + 1
+    local b
+    local page = New("ScrollingFrame", ContentContainer, {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, BorderSizePixel = 0,
+        Visible = false, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent})
+    New("UIListLayout", page, {Padding = UDim.new(0,9), SortOrder = Enum.SortOrder.LayoutOrder})
+    local header = New("Frame", page, {Size = UDim2.new(1,-8,0,52), BackgroundTransparency = 1})
+    Text(header, label, 21, UDim2.new(), UDim2.new(1,0,0,28))
+    Text(header, subtitle, 11, UDim2.fromOffset(0,31), UDim2.new(1,0,0,18), Color3.fromRGB(140,162,173))
+    b = Button(sidebar, label, UDim2.fromOffset(10,48+(index-1)*45), UDim2.fromOffset(142,36), function()
+        for _, entry in ipairs(Pages) do entry.Page.Visible = false; entry.Button.BackgroundColor3 = Theme.Sidebar; entry.Button.TextColor3 = Theme.Text end
+        page.Visible = true; b.BackgroundColor3 = Color3.fromRGB(26,64,52); b.TextColor3 = Theme.Accent; SelectedPage = page
+    end, Theme.Sidebar)
+    table.insert(Pages, {Page = page, Button = b})
+    return page
+end
+local function Card(parent, height)
+    return Round(New("Frame", parent, {Size = UDim2.new(1,-8,0,height), BackgroundColor3 = Color3.fromRGB(23,33,42), BorderSizePixel = 0}), 9)
+end
+local function Toggle(parent, title, detail, key)
+    local card = Card(parent, 62)
+    Text(card,title,13,UDim2.fromOffset(13,10),UDim2.new(1,-100,0,20))
+    Text(card,detail,10,UDim2.fromOffset(13,34),UDim2.new(1,-100,0,16),Color3.fromRGB(140,162,173))
+    local b = Button(card,"",UDim2.new(1,-73,0,17),UDim2.fromOffset(60,28),function() SetConfig(key,not Configs[key]) end)
+    Refresh[key] = function()
+        b.Text = Configs[key] and "ON" or "OFF"
+        b.BackgroundColor3 = Configs[key] and Color3.fromRGB(25,110,76) or Color3.fromRGB(43,53,66)
     end
-    Refresh[configKey]()
-    Connect(button.Activated, function()
-        SetConfig(configKey, not Configs[configKey])
-        if callback then callback(Configs[configKey]) end
+    Refresh[key]()
+end
+local function Slider(parent, title, key, minimum, maximum)
+    local card = Card(parent,65)
+    local label = Text(card,title,12,UDim2.fromOffset(13,8),UDim2.new(1,-26,0,20))
+    local rail = New("TextButton",card,{Text="",Position=UDim2.fromOffset(13,32),Size=UDim2.new(1,-26,0,25),BackgroundTransparency=1})
+    local track = Round(New("Frame",rail,{Position=UDim2.fromOffset(0,10),Size=UDim2.new(1,0,0,5),BackgroundColor3=Color3.fromRGB(45,58,70),BorderSizePixel=0}),3)
+    local fill = Round(New("Frame",track,{Size=UDim2.fromScale(0,1),BackgroundColor3=Theme.Accent,BorderSizePixel=0}),3)
+    local dragging
+    Refresh[key] = function()
+        label.Text = title .. "  ·  " .. tostring(Configs[key])
+        fill.Size = UDim2.fromScale((Configs[key]-minimum)/(maximum-minimum),1)
+    end
+    local function Update(input)
+        local amount=math.clamp((input.Position.X-rail.AbsolutePosition.X)/math.max(rail.AbsoluteSize.X,1),0,1)
+        Configs[key]=math.floor(minimum+(maximum-minimum)*amount+0.5); Refresh[key]()
+    end
+    Connect(rail.InputBegan,function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=input; Update(input) end
     end)
+    Connect(UserInputService.InputChanged,function(input)
+        if dragging and (input==dragging or input.UserInputType==Enum.UserInputType.MouseMovement) then Update(input) end
+    end)
+    Connect(UserInputService.InputEnded,function(input) if input==dragging then dragging=nil end end)
+    Refresh[key]()
 end
-
-local function CreateSlider(parent, text, min, max, configKey)
-    local Frame = Instance.new("Frame", parent); Frame.Size = UDim2.new(1, -10, 0, 55); Frame.BackgroundColor3 = Theme.Element; Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 6)
-    local Label = Instance.new("TextLabel", Frame); Label.Text = text .. ": " .. Configs[configKey]; Label.Size = UDim2.new(1, -20, 0, 20); Label.Position = UDim2.new(0, 10, 0, 5); Label.BackgroundTransparency = 1; Label.TextColor3 = Theme.Text; Label.Font = Enum.Font.GothamSemibold; Label.TextXAlignment = Enum.TextXAlignment.Left; Label.TextSize = 14
-    local SliderBg = Instance.new("TextButton", Frame); SliderBg.Text = ""; SliderBg.Size = UDim2.new(1, -20, 0, 6); SliderBg.Position = UDim2.new(0, 10, 0, 35); SliderBg.BackgroundColor3 = Theme.Background; SliderBg.AutoButtonColor = false; Instance.new("UICorner", SliderBg).CornerRadius = UDim.new(1, 0)
-    local SliderFill = Instance.new("Frame", SliderBg); SliderFill.Size = UDim2.new((Configs[configKey] - min)/(max - min), 0, 1, 0); SliderFill.BackgroundColor3 = Theme.Accent; Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
-    local function Update(input) local pos = math.clamp((input.Position.X - SliderBg.AbsolutePosition.X) / SliderBg.AbsoluteSize.X, 0, 1); local val = math.floor(min + (max - min) * pos); Configs[configKey] = val; Label.Text = text .. ": " .. val; SliderFill.Size = UDim2.new(pos, 0, 1, 0) end
-    local sliding = false; Connect(SliderBg.InputBegan, function(input) if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then sliding = input; Update(input) end end); Connect(UserInputService.InputEnded, function(input) if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then if input == sliding or input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end end end); Connect(UserInputService.InputChanged, function(input) if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input == sliding) then Update(input) end end)
+local function Choice(parent,title,key,options)
+    local card=Card(parent,48)
+    Text(card,title,12,UDim2.fromOffset(13,13),UDim2.new(0.45,0,0,22))
+    local b=Button(card,"",UDim2.new(0.45,0,0,9),UDim2.new(0.55,-13,0,30),function()
+        local index=table.find(options,Configs[key]) or 0
+        SetConfig(key,options[index % #options + 1])
+    end)
+    Refresh[key]=function() b.Text=tostring(Configs[key]) .. "  ›" end
+    Refresh[key]()
 end
-
--- CRIAÇÃO DAS ABAS
-local FarmTab = CreateTab("Auto Farm")
-local EspTab = CreateTab("Visuals / ESP")
-local PlayerTab = CreateTab("Player")
-
--- SEÇÃO RIDING
-local RidingLabel = Instance.new("TextLabel", FarmTab)
-RidingLabel.Text = "--- RIDING FARM ---"
-RidingLabel.Size = UDim2.new(1, 0, 0, 25); RidingLabel.BackgroundTransparency = 1; RidingLabel.TextColor3 = Theme.Accent; RidingLabel.Font = Enum.Font.GothamBold; RidingLabel.TextSize = 14
-
-CreateToggle(FarmTab, "Auto Riding", "AutoRiding", function(state) if state then State.Blacklist = {} end end)
-CreateToggle(FarmTab, "Iniciar corrida perto", "AutoStartRace")
-CreateSlider(FarmTab, "Velocidade do Dragão", 100, 400, "TweenSpeed")
-
-local FarmLabel = Instance.new("TextLabel", FarmTab)
-FarmLabel.Text = "--- FARM NORMAL ---"
-FarmLabel.Size = UDim2.new(1, 0, 0, 25); FarmLabel.BackgroundTransparency = 1; FarmLabel.TextColor3 = Theme.Accent; FarmLabel.Font = Enum.Font.GothamBold; FarmLabel.TextSize = 14
-
-CreateToggle(FarmTab, "Auto Farm Mobs", "AutoFarm")
-CreateToggle(FarmTab, "Auto Coletar Ovos (Mira)", "AutoEgg")
-CreateToggle(FarmTab, "Auto Coletar Baús", "AutoChest") -- [NOVO]
-CreateToggle(FarmTab, "Auto Coletar Recursos", "AutoCollect")
-CreateSlider(FarmTab, "Distância Farm", 5, 50, "FarmDistance")
-
--- Configurações Visuals
-CreateToggle(EspTab, "ESP Mobs (Vermelho)", "EspMobs")
-CreateToggle(EspTab, "ESP Ovos (Dourado)", "EspEggs")
-CreateToggle(EspTab, "ESP Baús (Azul)", "EspChests") -- [NOVO]
-CreateToggle(EspTab, "ESP Recursos (Verde)", "EspResources")
-
--- Configurações Player
-CreateToggle(PlayerTab, "Fly (G)", "Fly")
-CreateToggle(PlayerTab, "Aplicar velocidade / pulo", "PlayerMods")
-CreateToggle(PlayerTab, "Anti AFK", "AntiAFK")
-CreateSlider(PlayerTab, "Fly Speed", 20, 200, "FlySpeed")
-CreateSlider(PlayerTab, "Walk Speed", 16, 200, "WalkSpeed")
-CreateSlider(PlayerTab, "Jump Power", 50, 300, "JumpPower")
-
-Tabs[1].Btn.BackgroundColor3 = Theme.Accent; Tabs[1].Btn.TextColor3 = Color3.new(0,0,0); Tabs[1].Page.Visible = true
-
-
-local status = Instance.new("TextLabel", MainFrame)
-status.Position = UDim2.new(0, 140, 1, -22)
-status.Size = UDim2.new(1, -150, 0, 20)
-status.BackgroundTransparency = 1
-status.TextColor3 = Theme.Accent
-status.Font = Enum.Font.Gotham
-status.TextSize = 11
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.Text = "Pronto • escolha um modo de movimento"
-ContentContainer.Size = UDim2.new(1, -140, 1, -75)
-local function Status(message) status.Text = message end
-local function TopButton(text, width, offset, callback)
-    local button = Instance.new("TextButton", TopBar)
-    button.Size = UDim2.new(0, width, 0, 28)
-    button.Position = UDim2.new(1, offset, 0, 6)
-    button.Text = text; button.TextSize = 11; button.Font = Enum.Font.GothamBold
-    button.TextColor3 = Theme.Text; button.BackgroundColor3 = Theme.Element
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
-    Connect(button.Activated, callback)
-    return button
+local function Input(parent,title,key,placeholder)
+    local card=Card(parent,62)
+    Text(card,title,11,UDim2.fromOffset(13,6),UDim2.new(1,-26,0,18))
+    local box=Round(New("TextBox",card,{Position=UDim2.fromOffset(13,29),Size=UDim2.new(1,-26,0,25),
+        Text=Configs[key],PlaceholderText=placeholder,ClearTextOnFocus=false,TextSize=11,Font=Enum.Font.Gotham,
+        BackgroundColor3=Color3.fromRGB(14,23,31),TextColor3=Theme.Text,PlaceholderColor3=Color3.fromRGB(120,145,155),BorderSizePixel=0}),5)
+    Connect(box.FocusLost,function() Configs[key]=box.Text:match("^%s*(.-)%s*$") end)
 end
-TopButton("Parar tudo", 80, -180, function() StopAll(); Status("Parado") end)
-TopButton("Sair", 50, -95, function() Session.Destroy() end)
-local reopen = Instance.new("TextButton", ScreenGui)
-reopen.Size = UDim2.new(0, 85, 0, 34); reopen.Position = UDim2.new(0, 12, 0.5, -17)
-reopen.Text = "PudimHub"; reopen.TextColor3 = Theme.Accent
-reopen.BackgroundColor3 = Theme.Sidebar; reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 12
-Instance.new("UICorner", reopen).CornerRadius = UDim.new(0, 8)
-Connect(reopen.Activated, function() MainFrame.Visible = not MainFrame.Visible end)
-local scale = Instance.new("UIScale", MainFrame)
+local Overview=Page("Visão geral","Alvos carregados, atividade e resultado das interações.")
+local FarmTab=Page("Farm normal","Escolha o alvo, a arma e a posição de ataque.")
+local ChestTab=Page("Coletas","Baús, ovos e recursos com tentativas limitadas.")
+local RidingTab=Page("Riding","Corrida com cancelamento e controle de velocidade.")
+local EspTab=Page("ESP","Marcadores por categoria, vida e distância.")
+local PlayerTab=Page("Jogador","Movimento, voo e ajustes do personagem.")
+local summary=Card(Overview,86)
+Text(summary,"ALVOS CARREGADOS",10,UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Theme.Accent)
+local counts=Text(summary,"Mobs 0   •   Baús 0   •   Ovos 0   •   Recursos 0",13,UDim2.fromOffset(14,36),UDim2.new(1,-28,0,25))
+local targetCard=Card(Overview,99)
+Text(targetCard,"ALVO ATUAL",10,UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Theme.Accent)
+local targetLabel=Text(targetCard,"Nenhum",16,UDim2.fromOffset(14,33),UDim2.new(1,-28,0,25))
+local targetDetail=Text(targetCard,"Aguardando um modo de farm",11,UDim2.fromOffset(14,65),UDim2.new(1,-28,0,20),Color3.fromRGB(140,162,173))
+local logCard=Card(Overview,124)
+Text(logCard,"ATIVIDADE RECENTE",10,UDim2.fromOffset(14,8),UDim2.new(1,-28,0,20),Theme.Accent)
+local logLabel=Text(logCard,"",11,UDim2.fromOffset(14,32),UDim2.new(1,-28,0,85),Color3.fromRGB(160,180,190))
+logLabel.TextYAlignment=Enum.TextYAlignment.Top; logLabel.TextWrapped=true
+local LogLines, lastMessage={},nil
+local function Status(message)
+    status.Text=message
+    if message~=lastMessage then
+        lastMessage=message; table.insert(LogLines,1,message)
+        while #LogLines>4 do table.remove(LogLines) end
+        logLabel.Text=table.concat(LogLines,"\n")
+    end
+end
+local function SetTarget(object,detail)
+    Session.Target=object
+    targetLabel.Text=object and object.Name or "Nenhum"
+    targetDetail.Text=detail or "Aguardando um modo de farm"
+end
+Toggle(FarmTab,"Farm de mobs","Mantém o alvo até morrer ou ficar sem progresso.","AutoFarm")
+Input(FarmTab,"Filtrar nome do mob","MobFilter","Vazio = todos os mobs reconhecidos")
+Choice(FarmTab,"Prioridade","MobPriority",{"Mais próximo","Menor vida"})
+Choice(FarmTab,"Posição de ataque","FarmPosition",{"Acima","Atrás"})
+Choice(FarmTab,"Tipo de ataque","AttackMode",{"Ferramenta","Clique"})
+Toggle(FarmTab,"Equipar automaticamente","Usa a primeira ferramenta disponível na mochila.","AutoEquip")
+Input(FarmTab,"Ferramenta preferida","ToolName","Nome exato; vazio = equipada / primeira disponível")
+Slider(FarmTab,"Distância do alvo","FarmDistance",3,35)
+Slider(FarmTab,"Raio de busca","FarmRadius",100,3000)
+Slider(FarmTab,"Intervalo do ataque (ms)","AttackInterval",100,1500)
+Slider(FarmTab,"Trocar se não causar dano (s)","StallTimeout",5,40)
+Toggle(ChestTab,"Farm de baús","Vai ao mais próximo; espera resposta e tenta novamente.","AutoChest")
+Toggle(ChestTab,"Coletar ovos","Interage e aguarda o minigame de coleta.","AutoEgg")
+Toggle(ChestTab,"Coletar recursos","Procura pontos de coleta identificados no mapa.","AutoCollect")
+Slider(ChestTab,"Tentativas por alvo","CollectRetries",1,5)
+Slider(ChestTab,"Espera por resposta (s)","CollectWait",2,10)
+Slider(ChestTab,"Intervalo após falha (s)","RetryCooldown",5,90)
+Slider(ChestTab,"Velocidade de deslocamento","TravelSpeed",30,250)
+Toggle(RidingTab,"Auto Riding","Monte no dragão e inicie a corrida.","AutoRiding")
+Toggle(RidingTab,"Iniciar corrida perto","Aciona prompts de corrida dentro do alcance.","AutoStartRace")
+Slider(RidingTab,"Velocidade do dragão","TweenSpeed",50,400)
+Slider(RidingTab,"Raio dos anéis","SearchRadius",100,3000)
+Toggle(EspTab,"Mobs","Nome, distância e barra de vida.","EspMobs")
+Toggle(EspTab,"Baús","Contorno azul e estado da interação.","EspChests")
+Toggle(EspTab,"Ovos","Marcadores dourados, mesmo sem prompt ativo.","EspEggs")
+Toggle(EspTab,"Recursos","Identificação dos pontos de coleta.","EspResources")
+Toggle(EspTab,"Ver através das paredes","Desligue para respeitar a oclusão.","EspThroughWalls")
+Toggle(EspTab,"Contorno dos objetos","Desligue para mostrar somente as etiquetas.","EspHighlight")
+Slider(EspTab,"Distância máxima","EspDistance",100,4000)
+Slider(EspTab,"Máximo de marcadores","EspLimit",5,60)
+Toggle(PlayerTab,"Voo (G)","WASD · Espaço sobe · Ctrl desce.","Fly")
+Toggle(PlayerTab,"Aplicar velocidade e pulo","Restaura os valores ao desligar.","PlayerMods")
+Toggle(PlayerTab,"Anti AFK","Mantém a rotina anti-inatividade ativa.","AntiAFK")
+Slider(PlayerTab,"Velocidade do voo","FlySpeed",20,200)
+Slider(PlayerTab,"Velocidade ao andar","WalkSpeed",16,150)
+Slider(PlayerTab,"Força do pulo","JumpPower",50,200)
+Pages[1].Page.Visible=true; Pages[1].Button.BackgroundColor3=Color3.fromRGB(26,64,52)
+local reopen=Button(ScreenGui,"PUDIM",UDim2.new(0,12,0.5,-20),UDim2.fromOffset(72,40),function() MainFrame.Visible=not MainFrame.Visible end)
+local drag, dragStart, panelStart
+Connect(TopBar.InputBegan,function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then drag=input; dragStart=input.Position; panelStart=MainFrame.Position end
+end)
+Connect(UserInputService.InputEnded,function(input) if input==drag then drag=nil end end)
+Connect(UserInputService.InputChanged,function(input)
+    if drag and (input==drag or input.UserInputType==Enum.UserInputType.MouseMovement) then
+        local delta=input.Position-dragStart
+        MainFrame.Position=UDim2.new(panelStart.X.Scale,panelStart.X.Offset+delta.X,panelStart.Y.Scale,panelStart.Y.Offset+delta.Y)
+    end
+end)
 local function Resize()
-    local camera = Workspace.CurrentCamera
-    if camera then scale.Scale = math.clamp(math.min((camera.ViewportSize.X - 24) / 550, (camera.ViewportSize.Y - 30) / 350), 0.35, 1) end
+    local camera=Workspace.CurrentCamera
+    if camera then scale.Scale=math.clamp(math.min((camera.ViewportSize.X-20)/740,(camera.ViewportSize.Y-24)/490),0.25,1) end
 end
 
 local cooldown = setmetatable({}, {__mode = "k"})
-local candidates = {}
+local failures = setmetatable({}, {__mode = "k"})
+local candidates, VisualTargets = {}, {}
+local Attempts, ObservedChanges = 0, 0
 local function Index(object)
-    if object:IsA("Model") or object:IsA("ProximityPrompt") then candidates[object] = true end
+    local n=object.Name:lower()
+    local named=n:find("egg",1,true) or n:find("chest",1,true) or n:find("treasure",1,true) or n:find("resource",1,true) or n:find("fruit",1,true) or n:find("food",1,true)
+    if object:IsA("Model") or object:IsA("ProximityPrompt") or (object:IsA("BasePart") and named) then candidates[object] = true end
 end
 for _, object in ipairs(Workspace:GetDescendants()) do Index(object) end
 Connect(Workspace.DescendantAdded, Index)
@@ -304,79 +358,129 @@ local function Excluded(object)
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and (object == player.Character or object:IsDescendantOf(player.Character)) then return true end
     end
-    local h = GetHumanoid()
-    local vehicle = h and h.SeatPart and h.SeatPart:FindFirstAncestorWhichIsA("Model")
-    return vehicle and (object == vehicle or object:IsDescendantOf(vehicle)) or false
-end
-local function Classify(object)
-    local node = object
-    for _ = 1, 5 do
-        if not node or node == Workspace then break end
-        local name = node.Name:lower()
-        if name:find("egg", 1, true) then return "Egg" end
-        if name:find("chest", 1, true) or name:find("treasure", 1, true) then return "Chest" end
-        if name:find("resource", 1, true) or name:find("harvest", 1, true) or name:find("food", 1, true) then return "Res" end
-        node = node.Parent
-    end
-end
-local function IsMob(object)
-    if not object:IsA("Model") or Excluded(object) then return false end
-    local h = object:FindFirstChildWhichIsA("Humanoid")
-    if not h or h.Health <= 0 or not Part(object) then return false end
-    local node = object
-    while node and node ~= Workspace do
-        local name = node.Name:lower()
-        if name:find("mob", 1, true) or name:find("enemies", 1, true) or name:find("monster", 1, true) then return true end
-        node = node.Parent
+    local node=object
+    while node and node~=Workspace do
+        local n=node.Name:lower()
+        if n=="dragons" or n=="playerdragons" or n=="pets" or n=="npcs" then return true end
+        if node:GetAttribute("Owner") or node:GetAttribute("OwnerId") or node:GetAttribute("OwnerUserId") then return true end
+        node=node.Parent
     end
     return false
 end
-local colors = {Mob = Color3.fromRGB(255,70,70), Egg = Color3.fromRGB(255,215,0), Chest = Color3.fromRGB(0,170,255), Res = Theme.Accent}
-local flags = {Mob = "EspMobs", Egg = "EspEggs", Chest = "EspChests", Res = "EspResources"}
-local names = {Mob = "MOB", Egg = "OVO", Chest = "BAÚ", Res = "RECURSO"}
-local function RemoveESP(object)
-    local data = ESP_Storage[object]
-    if data then data.Billboard:Destroy(); data.Highlight:Destroy(); ESP_Storage[object] = nil end
+local function NameTag(name)
+    name=name:lower()
+    if name:find("egg",1,true) then return "Egg" end
+    if name:find("chest",1,true) or name:find("treasure",1,true) then return "Chest" end
+    if name:find("resource",1,true) or name:find("harvest",1,true) or name:find("food",1,true) or name:find("fruit",1,true) then return "Res" end
 end
-local function UpdateESP(object, tag)
-    if not Configs[flags[tag]] then return end
-    local part = object:IsA("ProximityPrompt") and Part(object.Parent) or Part(object)
-    if not part then return end
-    local data = ESP_Storage[object]
-    if not data then
-        local hl = Instance.new("Highlight", ScreenGui)
-        hl.Adornee = object:IsA("Model") and object or part
-        hl.FillColor = colors[tag]; hl.FillTransparency = 0.65
-        local bill = Instance.new("BillboardGui", ScreenGui)
-        bill.Adornee = part; bill.AlwaysOnTop = true; bill.Size = UDim2.new(0, 145, 0, 24)
-        local label = Instance.new("TextLabel", bill)
-        label.Size = UDim2.fromScale(1,1); label.BackgroundTransparency = 1
-        label.TextColor3 = colors[tag]; label.Font = Enum.Font.GothamBold; label.TextSize = 12
-        data = {Highlight = hl, Billboard = bill, Text = label, Tag = tag}
-        ESP_Storage[object] = data
+local function Classify(object)
+    local node=object
+    for _=1,5 do
+        if not node or node==Workspace then break end
+        local tag=NameTag(node.Name)
+        if tag then return tag end
+        node=node.Parent
     end
-    local root = GetRoot()
-    data.Text.Text = names[tag] .. (root and string.format(" [%d studs]", (root.Position - part.Position).Magnitude) or "")
+    if object:IsA("ProximityPrompt") then return NameTag(object.ObjectText .. " " .. object.ActionText) end
+end
+local function Canonical(object)
+    local node=object:IsA("ProximityPrompt") and object.Parent or object
+    local model=node:IsA("Model") and node or node:FindFirstAncestorWhichIsA("Model")
+    if model and Part(model) then return model end
+    return Part(node)
+end
+local function IsMob(object)
+    if not object:IsA("Model") or Excluded(object) then return false end
+    local h=object:FindFirstChildWhichIsA("Humanoid")
+    if not h or h.Health<=0 or not Part(object) then return false end
+    local node=object
+    while node and node~=Workspace do
+        local n=node.Name:lower()
+        if n:find("mob",1,true) or n:find("enem",1,true) or n:find("monster",1,true) then return true end
+        node=node.Parent
+    end
+    return object:GetAttribute("Hostile")==true or object:GetAttribute("IsEnemy")==true
+end
+local colors={Mob=Color3.fromRGB(255,102,116),Egg=Color3.fromRGB(255,209,95),Chest=Color3.fromRGB(91,184,255),Res=Theme.Accent}
+local flags={Mob="EspMobs",Egg="EspEggs",Chest="EspChests",Res="EspResources"}
+local names={Mob="MOB",Egg="OVO",Chest="BAÚ",Res="RECURSO"}
+local function RemoveESP(object)
+    local d=ESP_Storage[object]
+    if d then d.Billboard:Destroy(); d.Highlight:Destroy(); ESP_Storage[object]=nil end
 end
 local function Scan()
-    Cache = {Mobs = {}, Eggs = {}, Resources = {}, Chests = {}, Races = {}}
-    local seen = {}
+    Cache={Mobs={},Eggs={},Resources={},Chests={},Races={}}
+    VisualTargets={}
+    local promptSeen={}
     for object in pairs(candidates) do
         if object.Parent and not Excluded(object) then
-            if IsMob(object) then table.insert(Cache.Mobs, object); seen[object] = true; UpdateESP(object, "Mob") end
-            if object:IsA("ProximityPrompt") and object.Enabled then
-                local tag = Classify(object)
-                local collection = tag == "Egg" and Cache.Eggs or tag == "Chest" and Cache.Chests or tag == "Res" and Cache.Resources
-                if collection then table.insert(collection, object); seen[object] = true; UpdateESP(object, tag) end
-                local description = (object.ObjectText .. " " .. object.ActionText):lower()
-                if description:find("race", 1, true) or description:find("corrida", 1, true) then table.insert(Cache.Races, object) end
+            if object:IsA("Model") and IsMob(object) then
+                table.insert(Cache.Mobs,object); VisualTargets[object]={Tag="Mob"}
+            elseif object:IsA("ProximityPrompt") then
+                local tag=Classify(object)
+                local owner=Canonical(object)
+                if tag and owner then
+                    local visual=VisualTargets[owner]
+                    if not visual or not visual.Prompt or object.Enabled then VisualTargets[owner]={Tag=tag,Prompt=object} end
+                    local list=tag=="Egg" and Cache.Eggs or tag=="Chest" and Cache.Chests or Cache.Resources
+                    if object.Enabled and not promptSeen[owner] then table.insert(list,object); promptSeen[owner]=true end
+                end
+                local description=(object.ObjectText .. " " .. object.ActionText):lower()
+                if object.Enabled and (description:find("race",1,true) or description:find("corrida",1,true)) then table.insert(Cache.Races,object) end
+            elseif NameTag(object.Name) then
+                local owner=Canonical(object)
+                if owner and not VisualTargets[owner] then VisualTargets[owner]={Tag=Classify(object)} end
             end
         end
     end
-    for object, data in pairs(ESP_Storage) do
-        if not seen[object] or not Configs[flags[data.Tag]] then RemoveESP(object) end
-    end
+    counts.Text=string.format("Mobs %d   •   Baús %d   •   Ovos %d   •   Recursos %d",#Cache.Mobs,#Cache.Chests,#Cache.Eggs,#Cache.Resources)
+    substatus.Text=string.format("Interações enviadas: %d   •   Alvos que mudaram após interação: %d",Attempts,ObservedChanges)
 end
+local function UpdateVisuals()
+    local root=GetRoot()
+    if not root then for object in pairs(ESP_Storage) do RemoveESP(object) end; return end
+    local sorted={}
+    for object,info in pairs(VisualTargets) do
+        local part=Part(object)
+        if part and Configs[flags[info.Tag]] then
+            local distance=(root.Position-part.Position).Magnitude
+            if distance<=Configs.EspDistance then table.insert(sorted,{Object=object,Info=info,Part=part,Distance=distance}) end
+        end
+    end
+    table.sort(sorted,function(a,b) return a.Distance<b.Distance end)
+    local visible={}
+    for index=1,math.min(#sorted,Configs.EspLimit) do
+        local item=sorted[index]; local object,info=item.Object,item.Info
+        visible[object]=true
+        local d=ESP_Storage[object]
+        if not d then
+            local hl=New("Highlight",ScreenGui,{Adornee=object,FillTransparency=0.82,OutlineTransparency=0.15})
+            local bill=New("BillboardGui",ScreenGui,{Adornee=item.Part,Size=UDim2.fromOffset(185,54),StudsOffsetWorldSpace=Vector3.new(0,3,0),MaxDistance=Configs.EspDistance})
+            local bg=Round(New("Frame",bill,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(12,20,28),BackgroundTransparency=0.15,BorderSizePixel=0}),7)
+            local label=Text(bg,"",11,UDim2.fromOffset(7,4),UDim2.new(1,-14,0,19))
+            local detail=Text(bg,"",10,UDim2.fromOffset(7,24),UDim2.new(1,-14,0,17))
+            local track=New("Frame",bg,{Position=UDim2.new(0,7,1,-6),Size=UDim2.new(1,-14,0,3),BackgroundTransparency=1})
+            local health=New("Frame",track,{Size=UDim2.fromScale(1,1),BackgroundColor3=colors.Mob,BorderSizePixel=0})
+            d={Highlight=hl,Billboard=bill,Text=label,Detail=detail,Health=health}; ESP_Storage[object]=d
+        end
+        local selected=Session.Target==object or (Session.Target and Canonical(Session.Target)==object)
+        d.Highlight.Enabled=Configs.EspHighlight and index<=30
+        d.Highlight.FillColor=colors[info.Tag]; d.Highlight.OutlineColor=selected and Color3.new(1,1,1) or colors[info.Tag]
+        d.Highlight.DepthMode=Configs.EspThroughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+        d.Billboard.AlwaysOnTop=Configs.EspThroughWalls; d.Billboard.MaxDistance=Configs.EspDistance
+        d.Text.Text=(selected and "> " or "") .. names[info.Tag] .. " · " .. object.Name; d.Text.TextColor3=colors[info.Tag]
+        local h=object:FindFirstChildWhichIsA("Humanoid")
+        local state=""
+        if h then state=string.format(" · %d/%d HP",math.ceil(h.Health),math.ceil(h.MaxHealth))
+        elseif info.Prompt then state=info.Prompt.Enabled and " · interativo" or " · indisponível"
+        else state=" · sem prompt" end
+        d.Detail.Text=string.format("%d studs%s",item.Distance,state)
+        d.Health.Visible=h~=nil
+        if h then d.Health.Size=UDim2.fromScale(math.clamp(h.Health/math.max(h.MaxHealth,1),0,1),1) end
+    end
+    for object in pairs(ESP_Storage) do if not visible[object] then RemoveESP(object) end end
+end
+
 local function Nearest(objects, origin, maxDistance)
     local best, distance = nil, maxDistance or math.huge
     for _, object in ipairs(objects) do
@@ -390,7 +494,7 @@ local function Nearest(objects, origin, maxDistance)
     end
     return best, distance
 end
-local function Move(part, target, speed, key, valid)
+local function Move(part, target, speed, key, valid, tolerance)
     CancelMove()
     local revision = Session.Revision
     local duration = math.max(0.1, (part.Position - target.Position).Magnitude / speed)
@@ -401,7 +505,7 @@ local function Move(part, target, speed, key, valid)
     repeat
         task.wait(0.05)
         if not Session.Alive or revision ~= Session.Revision or not Configs[key] or not part.Parent or (valid and not valid()) then break end
-        if (part.Position - target.Position).Magnitude < 5 then arrived = true; break end
+        if (part.Position - target.Position).Magnitude < (tolerance or 4) then arrived = true; break end
     until os.clock() >= deadline or tween.PlaybackState == Enum.PlaybackState.Completed or tween.PlaybackState == Enum.PlaybackState.Cancelled
     tween:Cancel()
     if Session.Tween == tween then Session.Tween = nil end
@@ -443,28 +547,46 @@ local function CollectionUI()
         end
     end
 end
-local function Collect(key, list)
-    local root = GetRoot()
+local function Collect(key,list)
+    local root=GetRoot()
     if not root then Status("Aguardando personagem"); return end
-    local prompt = Nearest(list, root.Position)
-    if not prompt then Status("Nenhum alvo de coleta disponível / carregado"); return end
-    local part = Part(prompt.Parent)
+    local prompt=Nearest(list,root.Position,Configs.FarmRadius)
+    if not prompt then SetTarget(nil); Status("Sem coleta disponível no raio; aguardando"); return end
+    local part=Part(prompt.Parent)
     if not part then return end
-    cooldown[prompt] = os.clock() + 12
-    Status("Coletando: " .. prompt.Parent.Name)
-    local arrived = Move(GetMoverPart() or root, part.CFrame * CFrame.new(0, 2, 0), Configs.TweenSpeed, key, function() return prompt:IsDescendantOf(Workspace) and prompt.Enabled end)
-    if not arrived then return end
-    local revision = Session.Revision
-    if Prompt(prompt) then
-        local deadline = os.clock() + 3
+    local owner=Canonical(prompt)
+    SetTarget(owner,"Indo até o ponto de interação")
+    Status("Deslocando até " .. (owner and owner.Name or prompt.Parent.Name))
+    local reach=math.max(0.5,math.min(2,prompt.MaxActivationDistance*0.4))
+    local arrived=Move(GetMoverPart() or root,part.CFrame*CFrame.new(0,reach,0),Configs.TravelSpeed,key,function()
+        return prompt:IsDescendantOf(Workspace) and prompt.Enabled
+    end, math.max(0.25,math.min(1,prompt.MaxActivationDistance*0.2)))
+    if not arrived then cooldown[prompt]=os.clock()+Configs.RetryCooldown; return end
+    local revision=Session.Revision
+    for attempt=1,Configs.CollectRetries do
+        if not Session.Alive or Session.Revision~=revision or not Configs[key] then return end
+        if not prompt:IsDescendantOf(Workspace) or not prompt.Enabled then break end
+        Status(string.format("Interagindo: tentativa %d/%d",attempt,Configs.CollectRetries))
+        if not Prompt(prompt) then break end
+        Attempts+=1
+        local deadline=os.clock()+Configs.CollectWait
         repeat
-            task.wait(0.2)
-            if not Session.Alive or Session.Revision ~= revision or not Configs[key] then break end
+            task.wait(0.15)
+            if not Session.Alive or Session.Revision~=revision or not Configs[key] then return end
+            if not prompt:IsDescendantOf(Workspace) or not prompt.Enabled then
+                ObservedChanges+=1; failures[prompt]=nil; cooldown[prompt]=os.clock()+15
+                Status("Alvo mudou após interação; seguindo para o próximo")
+                SetTarget(nil); return
+            end
             CollectionUI()
-        until os.clock() >= deadline
-        if Session.Alive then Status("Interação enviada; coleta depende do jogo / minigame") end
+        until os.clock()>=deadline
     end
+    failures[prompt]=(failures[prompt] or 0)+1
+    cooldown[prompt]=os.clock()+math.min(Configs.RetryCooldown*failures[prompt],180)
+    Status("Sem confirmação da coleta; alvo em espera")
+    SetTarget(nil)
 end
+
 local function Riding()
     local h, mover = GetHumanoid(), GetMoverPart()
     if not h or not h.SeatPart or not mover then Status("Monte no dragão para usar Riding"); return end
@@ -482,25 +604,83 @@ local function Riding()
     end
     local ring = Nearest(active, mover.Position, Configs.SearchRadius)
     if not ring then Status("Nenhum anel ativo no alcance"); return end
+    SetTarget(ring,"Atravessando anel da corrida")
     Status("Riding: anel " .. ring.Name)
     Move(mover, ring.CFrame, Configs.TweenSpeed, "AutoRiding", function()
         return ring:IsDescendantOf(Workspace) and ring.Transparency < Configs.MaxTransparency and GetMoverPart() == mover and h.SeatPart ~= nil
     end)
     cooldown[ring] = os.clock() + Configs.IgnoreTime
 end
+local farmTarget, lastHealth, lastDamage, lastAttack, approachFailures
+local function PickMob(root)
+    local best,bestScore
+    for _,mob in ipairs(Cache.Mobs) do
+        if IsMob(mob) and (cooldown[mob] or 0)<=os.clock() and (Configs.MobFilter=="" or mob.Name:lower():find(Configs.MobFilter:lower(),1,true)) then
+            local distance=(root.Position-Part(mob).Position).Magnitude
+            local h=mob:FindFirstChildWhichIsA("Humanoid")
+            if distance<=Configs.FarmRadius then
+                local score=Configs.MobPriority=="Menor vida" and h.Health or distance
+                if not bestScore or score<bestScore then best,bestScore=mob,score end
+            end
+        end
+    end
+    return best
+end
 local function Farm()
-    local root = GetRoot()
-    if not root then Status("Aguardando personagem"); return end
-    local mob = Nearest(Cache.Mobs, root.Position)
-    if not mob or not IsMob(mob) then Status("Nenhum mob reconhecido / carregado"); return end
-    local part = Part(mob)
-    if not part then return end
-    local mover = GetMoverPart() or root
-    mover.CFrame = CFrame.new(part.Position + Vector3.new(0, Configs.FarmDistance, 0), part.Position)
-    mover.AssemblyLinearVelocity = Vector3.zero
-    local tool = Player.Character and Player.Character:FindFirstChildWhichIsA("Tool")
-    if tool then tool:Activate(); Status("Atacando: " .. mob.Name)
-    else Status("Posicionado; equipe uma ferramenta para atacar") end
+    local root,h=GetRoot(),GetHumanoid()
+    if not root or not h or h.Health<=0 then farmTarget=nil; Status("Aguardando respawn"); return end
+    if farmTarget and (not IsMob(farmTarget) or (root.Position-Part(farmTarget).Position).Magnitude>Configs.FarmRadius or (Configs.MobFilter~="" and not farmTarget.Name:lower():find(Configs.MobFilter:lower(),1,true))) then farmTarget=nil end
+    if not farmTarget then
+        farmTarget=PickMob(root)
+        if not farmTarget then SetTarget(nil); Status("Nenhum mob reconhecido no raio"); return end
+        lastHealth=farmTarget:FindFirstChildWhichIsA("Humanoid").Health
+        lastDamage=os.clock(); approachFailures=0
+    end
+    local mob=farmTarget
+    local enemy=mob:FindFirstChildWhichIsA("Humanoid")
+    local part=Part(mob)
+    SetTarget(mob,string.format("Vida: %d/%d · %s",math.ceil(enemy.Health),math.ceil(enemy.MaxHealth),Configs.FarmPosition))
+    if enemy.Health<lastHealth then lastDamage=os.clock() end
+    lastHealth=enemy.Health
+    local position=Configs.FarmPosition=="Atrás" and (part.CFrame*CFrame.new(0,1,Configs.FarmDistance)).Position or part.Position+Vector3.new(0,Configs.FarmDistance,0)
+    local destination=CFrame.new(position,part.Position)
+    local mover=GetMoverPart() or root
+    if (mover.Position-position).Magnitude>12 then
+        Status("Aproximando de " .. mob.Name)
+        local arrived=Move(mover,destination,Configs.TravelSpeed,"AutoFarm",function() return IsMob(mob) end)
+        lastDamage=os.clock()
+        if not arrived then
+            approachFailures+=1
+            if approachFailures>=2 then cooldown[mob]=os.clock()+Configs.RetryCooldown; farmTarget=nil; Status("Alvo inacessível; buscando outro") end
+        end
+        return
+    end
+    if os.clock()-lastDamage>=Configs.StallTimeout then
+        cooldown[mob]=os.clock()+Configs.RetryCooldown; farmTarget=nil; SetTarget(nil)
+        Status("Vida não diminuiu; trocando alvo")
+        return
+    end
+    mover.CFrame=destination; mover.AssemblyLinearVelocity=Vector3.zero
+    if os.clock()-(lastAttack or 0)<Configs.AttackInterval/1000 then return end
+    lastAttack=os.clock()
+    if Configs.AttackMode=="Ferramenta" then
+        local tool=Player.Character:FindFirstChildWhichIsA("Tool")
+        if Configs.AutoEquip and (not tool or (Configs.ToolName~="" and tool.Name~=Configs.ToolName)) then
+            local backpack=Player:FindFirstChildWhichIsA("Backpack")
+            local desired=backpack and (Configs.ToolName~="" and backpack:FindFirstChild(Configs.ToolName) or backpack:FindFirstChildWhichIsA("Tool"))
+            if desired and desired:IsA("Tool") then h:EquipTool(desired); tool=desired end
+        end
+        if Configs.ToolName~="" and (not tool or tool.Name~=Configs.ToolName) then Status("Ferramenta escolhida não está equipada / disponível"); return end
+        if tool then tool:Activate(); Status("Atacando: " .. mob.Name)
+        else Status("Equipe uma ferramenta ou escolha ataque por clique") end
+    else
+        local camera=Workspace.CurrentCamera
+        if camera then
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton1(camera.ViewportSize/2,camera.CFrame)
+            Status("Clique de ataque: " .. mob.Name)
+        end
+    end
 end
 
 local flight, originalHumanoid
@@ -578,15 +758,17 @@ local function Worker(interval, callback)
         end
     end)
 end
-Worker(0.75, function() Scan(); Resize() end)
+Worker(1, function() Scan(); Resize() end)
+Worker(0.2, UpdateVisuals)
 Worker(0.1, function()
     if Configs.AutoRiding then Riding()
     elseif Configs.AutoEgg then Collect("AutoEgg", Cache.Eggs)
     elseif Configs.AutoChest then Collect("AutoChest", Cache.Chests)
     elseif Configs.AutoCollect then Collect("AutoCollect", Cache.Resources)
-    elseif Configs.AutoFarm then Farm() end
+    elseif Configs.AutoFarm then Farm()
+    else farmTarget=nil; SetTarget(nil); Status(Configs.Fly and "Voo ativo" or "Pronto para iniciar") end
 end)
 Connect(RunService.Heartbeat, PlayerUpdate)
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "PudimHub DA v016", Text = "H: painel • G: voo • Parar tudo no topo", Duration = 5,
+    Title = "PudimHub DA v017", Text = "H: painel • G: voo • Parar tudo no topo", Duration = 5,
 }) end)
