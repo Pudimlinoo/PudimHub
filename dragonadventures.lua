@@ -1,4 +1,6 @@
--- PudimHub Dragon Adventures v017 | revisão do script enviado
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/script.lua"))()
+
+-- PudimHub Dragon Adventures v018 | revisão do script enviado
 -- Interações dependem dos objetos carregados e das funções do executor.
 if not game:IsLoaded() then game.Loaded:Wait() end
 local env = (type(getgenv) == "function" and getgenv()) or _G
@@ -28,11 +30,11 @@ local Player = Players.LocalPlayer
 
 -- // CONFIGURAÇÕES VISUAIS
 local Theme = {
-    Background = Color3.fromRGB(15, 15, 20),
-    Sidebar = Color3.fromRGB(20, 20, 30),
-    Element = Color3.fromRGB(30, 30, 45),
+    Background = Color3.fromRGB(5, 5, 8),
+    Sidebar = Color3.fromRGB(13, 8, 11),
+    Element = Color3.fromRGB(26, 10, 15),
     Text = Color3.fromRGB(240, 240, 240),
-    Accent = Color3.fromRGB(0, 255, 128), -- Verde Neon
+    Accent = Color3.fromRGB(240, 30, 55), -- Vermelho clássico da referência
     ToggleOff = Color3.fromRGB(50, 50, 60),
     Outline = Color3.fromRGB(40, 40, 50)
 }
@@ -142,7 +144,7 @@ local function StopAll()
     for _, refresh in pairs(Refresh) do refresh() end
 end
 
--- HUD v017: páginas, telemetria e controles de mouse/toque.
+-- HUD v018: páginas, telemetria e controles de mouse/toque.
 local function New(class, parent, props)
     local object = Instance.new(class)
     for key, value in pairs(props or {}) do object[key] = value end
@@ -158,32 +160,37 @@ local function Text(parent, text, size, position, dimensions, color)
         Size = dimensions or UDim2.fromScale(1,1), BackgroundTransparency = 1, TextColor3 = color or Theme.Text,
         Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd})
 end
-local ScreenGui = New("ScreenGui", Player:WaitForChild("PlayerGui"), {Name = "PudimHub_DA_v017", ResetOnSpawn = false, DisplayOrder = 50, ZIndexBehavior = Enum.ZIndexBehavior.Sibling})
+local ScreenGui = New("ScreenGui", Player:WaitForChild("PlayerGui"), {Name = "PudimHub_DA_v018", ResetOnSpawn = false, DisplayOrder = 50, ZIndexBehavior = Enum.ZIndexBehavior.Sibling})
 Session.Gui = ScreenGui
-local MainFrame = Round(New("Frame", ScreenGui, {Size = UDim2.fromOffset(740, 490), AnchorPoint = Vector2.new(0.5,0.5),
-    Position = UDim2.fromScale(0.5,0.5), BackgroundColor3 = Color3.fromRGB(12,17,23), BorderSizePixel = 0, ClipsDescendants = true}), 14)
-New("UIStroke", MainFrame, {Color = Color3.fromRGB(48,68,70), Thickness = 1})
+local MainFrame = Round(New("Frame", ScreenGui, {Size = UDim2.fromOffset(600, 600), AnchorPoint = Vector2.new(0.5,0.5),
+    Position = UDim2.fromScale(0.5,0.5), BackgroundColor3 = Color3.fromRGB(5,5,8), BorderSizePixel = 0, ClipsDescendants = false, BackgroundTransparency = 0.05}), 14)
+New("UIStroke", MainFrame, {Color = Color3.fromRGB(240,30,55), Thickness = 1, Transparency = 0.25})
 local scale = New("UIScale", MainFrame)
-local TopBar = New("Frame", MainFrame, {Size = UDim2.new(1,0,0,62), BackgroundColor3 = Color3.fromRGB(17,26,32), BorderSizePixel = 0})
-Text(TopBar, "PUDIM", 22, UDim2.fromOffset(20,10), UDim2.fromOffset(78,28), Theme.Accent)
-Text(TopBar, "HUB", 22, UDim2.fromOffset(101,10), UDim2.fromOffset(60,28))
-Text(TopBar, "DRAGON ADVENTURES  /  v017", 10, UDim2.fromOffset(21,39), UDim2.fromOffset(300,16), Color3.fromRGB(140,162,173))
+local TopBar = New("Frame", MainFrame, {Size = UDim2.new(1,0,0,64), BackgroundColor3 = Color3.fromRGB(13,8,11), BorderSizePixel = 0})
+Round(TopBar,12)
+local brand=Text(TopBar,"🍮 PUDIMHUB",19,UDim2.fromOffset(18,18),UDim2.fromOffset(220,28))
+brand.Font=Enum.Font.GothamBlack
+Text(TopBar,"V018 / DRAGON ADVENTURES",10,UDim2.new(1,-232,0,20),UDim2.fromOffset(184,24),Color3.fromRGB(156,161,177))
+local accent=New("Frame",MainFrame,{Position=UDim2.fromOffset(18,62),Size=UDim2.new(1,-36,0,1),BackgroundColor3=Theme.Accent,BorderSizePixel=0})
+New("UIGradient",accent,{Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.85),NumberSequenceKeypoint.new(0.5,0),NumberSequenceKeypoint.new(1,0.85)})})
 local function Button(parent, label, position, size, callback, color)
     local b = Round(New("TextButton", parent, {Text = label, Position = position, Size = size, BackgroundColor3 = color or Theme.Element,
         TextColor3 = Theme.Text, TextSize = 12, Font = Enum.Font.GothamBold, AutoButtonColor = true, BorderSizePixel = 0}), 7)
+    local edge=New("UIStroke",b,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=Theme.Accent,Thickness=1,Transparency=0.82})
+    Connect(b.MouseEnter,function() edge.Transparency=0.45 end)
+    Connect(b.MouseLeave,function() edge.Transparency=0.82 end)
     Connect(b.Activated, callback)
     return b
 end
-Button(TopBar, "PARAR TUDO", UDim2.new(1,-255,0,17), UDim2.fromOffset(115,30), function() StopAll() end, Color3.fromRGB(109,42,51))
-Button(TopBar, "—", UDim2.new(1,-130,0,17), UDim2.fromOffset(35,30), function() MainFrame.Visible = false end)
-Button(TopBar, "SAIR", UDim2.new(1,-85,0,17), UDim2.fromOffset(65,30), function() Session.Destroy() end)
-local sidebar = New("Frame", MainFrame, {Position = UDim2.fromOffset(0,62), Size = UDim2.new(0,162,1,-62), BackgroundColor3 = Color3.fromRGB(16,23,30), BorderSizePixel = 0})
-Text(sidebar, "CONTROLE", 10, UDim2.fromOffset(18,18), UDim2.fromOffset(130,20), Color3.fromRGB(116,139,151))
-Text(sidebar, "H  painel   •   G  voo", 10, UDim2.new(0,16,1,-30), UDim2.fromOffset(140,18), Color3.fromRGB(116,139,151))
-local ContentContainer = New("Frame", MainFrame, {Position = UDim2.fromOffset(178,78), Size = UDim2.new(1,-194,1,-145), BackgroundTransparency = 1})
-local footer = New("Frame", MainFrame, {Position = UDim2.new(0,162,1,-56), Size = UDim2.new(1,-162,0,56), BackgroundColor3 = Color3.fromRGB(17,26,32), BorderSizePixel = 0})
-local status = Text(footer, "Pronto para iniciar", 12, UDim2.fromOffset(15,9), UDim2.new(1,-30,0,19), Theme.Accent)
-local substatus = Text(footer, "Escolha um farm na barra lateral", 10, UDim2.fromOffset(15,30), UDim2.new(1,-30,0,16), Color3.fromRGB(140,162,173))
+Button(MainFrame, "PARAR TUDO", UDim2.fromOffset(154,76), UDim2.fromOffset(120,32), function() StopAll() end, Color3.fromRGB(109,42,51))
+Button(TopBar, "—", UDim2.new(1,-38,0,17), UDim2.fromOffset(30,30), function() MainFrame.Visible = false end)
+Button(MainFrame, "ENCERRAR", UDim2.fromOffset(282,76), UDim2.fromOffset(100,32), function() Session.Destroy() end)
+local sidebar=New("ScrollingFrame",MainFrame,{Position=UDim2.fromOffset(12,76),Size=UDim2.new(0,132,1,-124),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=2,ScrollBarImageColor3=Theme.Accent})
+New("UIListLayout",sidebar,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
+local ContentContainer = New("Frame", MainFrame, {Position = UDim2.fromOffset(154,122), Size = UDim2.new(1,-166,1,-180), BackgroundTransparency = 1})
+local footer = New("Frame", MainFrame, {Position = UDim2.new(0,12,1,-48), Size = UDim2.new(1,-24,0,40), BackgroundColor3 = Color3.fromRGB(13,8,11), BorderSizePixel = 0})
+local status = Text(footer, "Pronto para iniciar", 12, UDim2.fromOffset(10,2), UDim2.new(1,-30,0,19), Theme.Accent)
+local substatus = Text(footer, "Escolha um farm na barra lateral", 10, UDim2.fromOffset(10,23), UDim2.new(1,-30,0,16), Color3.fromRGB(156,161,177))
 local Pages, SelectedPage = {}, nil
 local function Page(label, subtitle)
     local index = #Pages + 1
@@ -193,50 +200,69 @@ local function Page(label, subtitle)
     New("UIListLayout", page, {Padding = UDim.new(0,9), SortOrder = Enum.SortOrder.LayoutOrder})
     local header = New("Frame", page, {Size = UDim2.new(1,-8,0,52), BackgroundTransparency = 1})
     Text(header, label, 21, UDim2.new(), UDim2.new(1,0,0,28))
-    Text(header, subtitle, 11, UDim2.fromOffset(0,31), UDim2.new(1,0,0,18), Color3.fromRGB(140,162,173))
-    b = Button(sidebar, label, UDim2.fromOffset(10,48+(index-1)*45), UDim2.fromOffset(142,36), function()
-        for _, entry in ipairs(Pages) do entry.Page.Visible = false; entry.Button.BackgroundColor3 = Theme.Sidebar; entry.Button.TextColor3 = Theme.Text end
-        page.Visible = true; b.BackgroundColor3 = Color3.fromRGB(26,64,52); b.TextColor3 = Theme.Accent; SelectedPage = page
-    end, Theme.Sidebar)
+    Text(header, subtitle, 11, UDim2.fromOffset(0,31), UDim2.new(1,0,0,18), Color3.fromRGB(156,161,177))
+    b = Button(sidebar, label, UDim2.new(), UDim2.new(1,-6,0,42), function()
+        for _, entry in ipairs(Pages) do entry.Page.Visible = false; entry.Button.BackgroundColor3 = Theme.Element; entry.Button.TextColor3 = Theme.Text end
+        page.Visible = true; b.BackgroundColor3 = Color3.fromRGB(95,10,25); b.TextColor3 = Theme.Accent; SelectedPage = page
+    end, Theme.Element)
+    b.LayoutOrder=index
     table.insert(Pages, {Page = page, Button = b})
     return page
 end
 local function Card(parent, height)
-    return Round(New("Frame", parent, {Size = UDim2.new(1,-8,0,height), BackgroundColor3 = Color3.fromRGB(23,33,42), BorderSizePixel = 0}), 9)
+    local card=Round(New("Frame", parent, {Size = UDim2.new(1,-8,0,height), BackgroundColor3 = Color3.fromRGB(13,8,11), BackgroundTransparency=0.2, BorderSizePixel = 0}), 8)
+    New("UIStroke",card,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=Theme.Accent,Thickness=1,Transparency=0.8})
+    return card
 end
 local function Toggle(parent, title, detail, key)
-    local card = Card(parent, 62)
-    Text(card,title,13,UDim2.fromOffset(13,10),UDim2.new(1,-100,0,20))
-    Text(card,detail,10,UDim2.fromOffset(13,34),UDim2.new(1,-100,0,16),Color3.fromRGB(140,162,173))
-    local b = Button(card,"",UDim2.new(1,-73,0,17),UDim2.fromOffset(60,28),function() SetConfig(key,not Configs[key]) end)
-    Refresh[key] = function()
-        b.Text = Configs[key] and "ON" or "OFF"
-        b.BackgroundColor3 = Configs[key] and Color3.fromRGB(25,110,76) or Color3.fromRGB(43,53,66)
+    local card=Card(parent,62)
+    Text(card,title,12,UDim2.fromOffset(12,9),UDim2.new(1,-78,0,20))
+    Text(card,detail,10,UDim2.fromOffset(12,32),UDim2.new(1,-78,0,20),Color3.fromRGB(156,161,177))
+    local hit=New("TextButton",card,{Text="",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,AutoButtonColor=false})
+    local toggle=Round(New("Frame",hit,{Size=UDim2.fromOffset(40,22),Position=UDim2.new(1,-52,0.5,-11),BackgroundColor3=Color3.fromRGB(55,18,25),BorderSizePixel=0}),11)
+    local knob=Round(New("Frame",toggle,{Size=UDim2.fromOffset(16,16),Position=UDim2.fromOffset(3,3),BackgroundColor3=Theme.Text,BorderSizePixel=0}),8)
+    local colorTween,positionTween
+    Refresh[key]=function()
+        if colorTween then colorTween:Cancel() end
+        if positionTween then positionTween:Cancel() end
+        colorTween=TweenService:Create(toggle,TweenInfo.new(0.15),{BackgroundColor3=Configs[key] and Theme.Accent or Color3.fromRGB(55,18,25)})
+        positionTween=TweenService:Create(knob,TweenInfo.new(0.15),{Position=UDim2.fromOffset(Configs[key] and 21 or 3,3)})
+        colorTween:Play(); positionTween:Play()
     end
+    Connect(hit.Activated,function() SetConfig(key,not Configs[key]) end)
     Refresh[key]()
 end
 local function Slider(parent, title, key, minimum, maximum)
-    local card = Card(parent,65)
-    local label = Text(card,title,12,UDim2.fromOffset(13,8),UDim2.new(1,-26,0,20))
-    local rail = New("TextButton",card,{Text="",Position=UDim2.fromOffset(13,32),Size=UDim2.new(1,-26,0,25),BackgroundTransparency=1})
-    local track = Round(New("Frame",rail,{Position=UDim2.fromOffset(0,10),Size=UDim2.new(1,0,0,5),BackgroundColor3=Color3.fromRGB(45,58,70),BorderSizePixel=0}),3)
+    local card = Card(parent,82)
+    local label = Text(card,title,12,UDim2.fromOffset(13,8),UDim2.new(1,-88,0,20))
+    local rail = New("TextButton",card,{Text="",Position=UDim2.fromOffset(16,38),Size=UDim2.new(1,-32,0,36),BackgroundTransparency=1})
+    local track = Round(New("Frame",rail,{Position=UDim2.fromOffset(0,10),Size=UDim2.new(1,0,0,5),BackgroundColor3=Color3.fromRGB(59,14,24),BorderSizePixel=0}),3)
     local fill = Round(New("Frame",track,{Size=UDim2.fromScale(0,1),BackgroundColor3=Theme.Accent,BorderSizePixel=0}),3)
-    local dragging
+    local knob=Round(New("Frame",track,{AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(16,16),BackgroundColor3=Theme.Text,BorderSizePixel=0}),8)
+    local valueBox=Round(New("TextBox",card,{Position=UDim2.new(1,-70,0,8),Size=UDim2.fromOffset(58,26),BackgroundColor3=Color3.fromRGB(30,9,15),TextColor3=Theme.Text,Font=Enum.Font.GothamBold,TextSize=12,ClearTextOnFocus=false,BorderSizePixel=0}),6)
+    local dragging,scrollWasEnabled
     Refresh[key] = function()
-        label.Text = title .. "  ·  " .. tostring(Configs[key])
+        label.Text = title
+        valueBox.Text=tostring(Configs[key])
+        knob.Position=UDim2.fromScale((Configs[key]-minimum)/(maximum-minimum),0.5)
         fill.Size = UDim2.fromScale((Configs[key]-minimum)/(maximum-minimum),1)
     end
+    Connect(valueBox.FocusLost,function()
+        local value=tonumber(valueBox.Text)
+        if value and value==value and math.abs(value)<math.huge then Configs[key]=math.clamp(math.floor(value+0.5),minimum,maximum) end
+        Refresh[key]()
+    end)
     local function Update(input)
         local amount=math.clamp((input.Position.X-rail.AbsolutePosition.X)/math.max(rail.AbsoluteSize.X,1),0,1)
         Configs[key]=math.floor(minimum+(maximum-minimum)*amount+0.5); Refresh[key]()
     end
     Connect(rail.InputBegan,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=input; Update(input) end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=input; scrollWasEnabled=parent.ScrollingEnabled; parent.ScrollingEnabled=false; Update(input) end
     end)
     Connect(UserInputService.InputChanged,function(input)
         if dragging and (input==dragging or input.UserInputType==Enum.UserInputType.MouseMovement) then Update(input) end
     end)
-    Connect(UserInputService.InputEnded,function(input) if input==dragging then dragging=nil end end)
+    Connect(UserInputService.InputEnded,function(input) if input==dragging then dragging=nil; parent.ScrollingEnabled=scrollWasEnabled end end)
     Refresh[key]()
 end
 local function Choice(parent,title,key,options)
@@ -254,10 +280,10 @@ local function Input(parent,title,key,placeholder)
     Text(card,title,11,UDim2.fromOffset(13,6),UDim2.new(1,-26,0,18))
     local box=Round(New("TextBox",card,{Position=UDim2.fromOffset(13,29),Size=UDim2.new(1,-26,0,25),
         Text=Configs[key],PlaceholderText=placeholder,ClearTextOnFocus=false,TextSize=11,Font=Enum.Font.Gotham,
-        BackgroundColor3=Color3.fromRGB(14,23,31),TextColor3=Theme.Text,PlaceholderColor3=Color3.fromRGB(120,145,155),BorderSizePixel=0}),5)
+        BackgroundColor3=Color3.fromRGB(30,9,15),TextColor3=Theme.Text,PlaceholderColor3=Color3.fromRGB(155,161,180),BorderSizePixel=0}),5)
     Connect(box.FocusLost,function() Configs[key]=box.Text:match("^%s*(.-)%s*$") end)
 end
-local Overview=Page("Visão geral","Alvos carregados, atividade e resultado das interações.")
+local Overview=Page("Início","Alvos carregados, atividade e resultado das interações.")
 local FarmTab=Page("Farm normal","Escolha o alvo, a arma e a posição de ataque.")
 local ChestTab=Page("Coletas","Baús, ovos e recursos com tentativas limitadas.")
 local RidingTab=Page("Riding","Corrida com cancelamento e controle de velocidade.")
@@ -265,14 +291,14 @@ local EspTab=Page("ESP","Marcadores por categoria, vida e distância.")
 local PlayerTab=Page("Jogador","Movimento, voo e ajustes do personagem.")
 local summary=Card(Overview,86)
 Text(summary,"ALVOS CARREGADOS",10,UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Theme.Accent)
-local counts=Text(summary,"Mobs 0   •   Baús 0   •   Ovos 0   •   Recursos 0",13,UDim2.fromOffset(14,36),UDim2.new(1,-28,0,25))
+local counts=Text(summary,"Mobs 0   •   Baús 0   •   Ovos 0   •   Recursos 0",11,UDim2.fromOffset(14,36),UDim2.new(1,-28,0,25))
 local targetCard=Card(Overview,99)
 Text(targetCard,"ALVO ATUAL",10,UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Theme.Accent)
 local targetLabel=Text(targetCard,"Nenhum",16,UDim2.fromOffset(14,33),UDim2.new(1,-28,0,25))
-local targetDetail=Text(targetCard,"Aguardando um modo de farm",11,UDim2.fromOffset(14,65),UDim2.new(1,-28,0,20),Color3.fromRGB(140,162,173))
+local targetDetail=Text(targetCard,"Aguardando um modo de farm",11,UDim2.fromOffset(14,65),UDim2.new(1,-28,0,20),Color3.fromRGB(156,161,177))
 local logCard=Card(Overview,124)
 Text(logCard,"ATIVIDADE RECENTE",10,UDim2.fromOffset(14,8),UDim2.new(1,-28,0,20),Theme.Accent)
-local logLabel=Text(logCard,"",11,UDim2.fromOffset(14,32),UDim2.new(1,-28,0,85),Color3.fromRGB(160,180,190))
+local logLabel=Text(logCard,"",11,UDim2.fromOffset(14,32),UDim2.new(1,-28,0,85),Color3.fromRGB(156,161,177))
 logLabel.TextYAlignment=Enum.TextYAlignment.Top; logLabel.TextWrapped=true
 local LogLines, lastMessage={},nil
 local function Status(message)
@@ -324,7 +350,7 @@ Toggle(PlayerTab,"Anti AFK","Mantém a rotina anti-inatividade ativa.","AntiAFK"
 Slider(PlayerTab,"Velocidade do voo","FlySpeed",20,200)
 Slider(PlayerTab,"Velocidade ao andar","WalkSpeed",16,150)
 Slider(PlayerTab,"Força do pulo","JumpPower",50,200)
-Pages[1].Page.Visible=true; Pages[1].Button.BackgroundColor3=Color3.fromRGB(26,64,52)
+Pages[1].Page.Visible=true; Pages[1].Button.BackgroundColor3=Color3.fromRGB(95,10,25)
 local reopen=Button(ScreenGui,"PUDIM",UDim2.new(0,12,0.5,-20),UDim2.fromOffset(72,40),function() MainFrame.Visible=not MainFrame.Visible end)
 local drag, dragStart, panelStart
 Connect(TopBar.InputBegan,function(input)
@@ -334,12 +360,18 @@ Connect(UserInputService.InputEnded,function(input) if input==drag then drag=nil
 Connect(UserInputService.InputChanged,function(input)
     if drag and (input==drag or input.UserInputType==Enum.UserInputType.MouseMovement) then
         local delta=input.Position-dragStart
-        MainFrame.Position=UDim2.new(panelStart.X.Scale,panelStart.X.Offset+delta.X,panelStart.Y.Scale,panelStart.Y.Offset+delta.Y)
+        local camera=Workspace.CurrentCamera
+        if camera then
+            local view=camera.ViewportSize; local half=300*scale.Scale
+            local x=panelStart.X.Scale*view.X+panelStart.X.Offset+delta.X
+            local y=panelStart.Y.Scale*view.Y+panelStart.Y.Offset+delta.Y
+            MainFrame.Position=UDim2.fromOffset(math.clamp(x,half,math.max(half,view.X-half)),math.clamp(y,half,math.max(half,view.Y-half-36)))
+        end
     end
 end)
 local function Resize()
     local camera=Workspace.CurrentCamera
-    if camera then scale.Scale=math.clamp(math.min((camera.ViewportSize.X-20)/740,(camera.ViewportSize.Y-24)/490),0.25,1) end
+    if camera then scale.Scale=math.clamp(math.min((camera.ViewportSize.X-24)/600,(camera.ViewportSize.Y-60)/600),0.25,1) end
 end
 
 local cooldown = setmetatable({}, {__mode = "k"})
@@ -401,7 +433,7 @@ local function IsMob(object)
     end
     return object:GetAttribute("Hostile")==true or object:GetAttribute("IsEnemy")==true
 end
-local colors={Mob=Color3.fromRGB(255,102,116),Egg=Color3.fromRGB(255,209,95),Chest=Color3.fromRGB(91,184,255),Res=Theme.Accent}
+local colors={Mob=Color3.fromRGB(255,102,116),Egg=Color3.fromRGB(255,209,95),Chest=Color3.fromRGB(91,184,255),Res=Color3.fromRGB(0,255,128)}
 local flags={Mob="EspMobs",Egg="EspEggs",Chest="EspChests",Res="EspResources"}
 local names={Mob="MOB",Egg="OVO",Chest="BAÚ",Res="RECURSO"}
 local function RemoveESP(object)
@@ -770,5 +802,5 @@ Worker(0.1, function()
 end)
 Connect(RunService.Heartbeat, PlayerUpdate)
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "PudimHub DA v017", Text = "H: painel • G: voo • Parar tudo no topo", Duration = 5,
+    Title = "PudimHub DA v018", Text = "H: painel • G: voo • Parar tudo no topo", Duration = 5,
 }) end)
