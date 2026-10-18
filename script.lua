@@ -2,7 +2,7 @@
 -- Antes, salve o script completo do Blox Fruits como bloxfruits.lua.
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local base = "https://raw.githubusercontent.com/Pudimlinoo/Pudimlinoo-script/main/"
+local base = "https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/"
 local scripts = {
     [994732206] = "bloxfruits.lua",
     [210851291] = "buildaboat.Lua",
