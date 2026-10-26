@@ -923,7 +923,7 @@ end)
 
 -- Estrutura de mapa conhecida: BoatStages/NormalStages/CaveStageN e TheEnd/GoldenChest/Trigger.
 -- Referencia de estrutura: github.com/Stefanuk12/ROBLOX (Build A Boat For Treasure/Autofarm.lua).
-local farm = {enabled = false, token = 0, stageDelay = 2, respawnDelay = 5,
+local farm = {enabled = false, token = 0, stageDelay = 2, respawnDelay = 5, finalHeight = 60,
     trips = 0, speed = 250, seconds = 0, gold = 0, lastGold = nil, goldObserved = false}
 local farmPlatforms = {}
 local function clearFarmPlatforms()
@@ -952,13 +952,53 @@ local function travel(rootPart, target, token, sameCharacter)
     local covered = 0
     while covered < distance do
         local dt = RunService.Heartbeat:Wait()
-        if not valid(token) or not sameCharacter() then return false end
+        if not valid(token) then return false end
+        local available, currentRoot = sameCharacter()
+        if not available or not valid(token) then return false end
+        if currentRoot and currentRoot ~= rootPart then
+            rootPart = currentRoot
+            start = rootPart.CFrame
+            distance = (start.Position - target.Position).Magnitude
+            covered = 0
+            if distance <= 0.001 then break end
+        end
         covered = math.min(distance, covered + farm.speed * math.min(dt, 0.1))
         rootPart.CFrame = start:Lerp(target, covered / distance)
         rootPart.AssemblyLinearVelocity = Vector3.zero
         rootPart.AssemblyAngularVelocity = Vector3.zero
     end
     return valid(token) and sameCharacter()
+end
+local function holdStage(target, seconds, token, sameCharacter)
+    local deadline = os.clock() + seconds
+    repeat
+        if not valid(token) then return false end
+        local available, currentRoot = sameCharacter()
+        if not available or not valid(token) then return false end
+        -- Dano nao cancela a etapa; neutraliza deslocamentos durante a espera.
+        currentRoot.CFrame = target
+        currentRoot.AssemblyLinearVelocity = Vector3.zero
+        currentRoot.AssemblyAngularVelocity = Vector3.zero
+        RunService.Heartbeat:Wait()
+    until os.clock() >= deadline
+    return valid(token)
+end
+local function finalWaypoints(start, target, clearance)
+    local height = math.max(start.Position.Y, target.Position.Y + clearance)
+    return {
+        CFrame.new(start.Position.X, height, start.Position.Z) * start.Rotation,
+        CFrame.new(target.Position.X, height, target.Position.Z) * target.Rotation,
+        target,
+    }
+end
+local function travelAboveWater(rootPart, target, clearance, token, sameCharacter)
+    for _, waypoint in ipairs(finalWaypoints(rootPart.CFrame, target, clearance)) do
+        if not travel(rootPart, waypoint, token, sameCharacter) then return false end
+        local available, currentRoot = sameCharacter()
+        if not available then return false end
+        rootPart = currentRoot
+    end
+    return valid(token)
 end
 local function route()
     local stages = workspace:FindFirstChild("BoatStages")
@@ -1003,15 +1043,37 @@ local function runFarm(token)
         end
         if not points then error(reason, 0) end
         local function sameCharacter()
-            return player.Character == character and rootPart.Parent and humanoid.Health > 0
+            local recoveryDeadline = os.clock() + 2
+            repeat
+                if not valid(token) or player.Character ~= character then return false end
+                local currentHumanoid = character:FindFirstChildOfClass("Humanoid")
+                local currentRoot = character:FindFirstChild("HumanoidRootPart")
+                if currentHumanoid and currentHumanoid.Health <= 0 then return false end
+                if currentHumanoid and currentRoot and currentRoot:IsA("BasePart") then
+                    humanoid, rootPart = currentHumanoid, currentRoot
+                    return true, rootPart
+                end
+                -- Tolera uma substituicao breve dos componentes sem reiniciar a rota.
+                RunService.Heartbeat:Wait()
+            until os.clock() >= recoveryDeadline
+            farmStatus("Componentes do personagem indisponíveis; aguardando recuperação…")
+            return false
         end
         local interrupted = false
-        for _, point in ipairs(points) do
+        for routeIndex, point in ipairs(points) do
             if not valid(token) then return end
             if not sameCharacter() then interrupted = true; break end
             if not point.marker.Parent then error("O mapa mudou. Reinicie o farm.", 0) end
             farmStatus("Passando pela etapa " .. point.index .. "…")
-            if not travel(rootPart, point.marker.CFrame, token, sameCharacter) then interrupted = true; break end
+            local reached
+            if routeIndex == #points then
+                farmStatus("Subindo antes da cachoeira final…")
+                reached = travelAboveWater(rootPart, point.marker.CFrame + Vector3.new(0, farm.finalHeight, 0),
+                    0, token, sameCharacter)
+            else
+                reached = travel(rootPart, point.marker.CFrame, token, sameCharacter)
+            end
+            if not reached then interrupted = true; break end
             rootPart.AssemblyLinearVelocity = Vector3.zero
             rootPart.AssemblyAngularVelocity = Vector3.zero
             local footOffset = humanoid.HipHeight + rootPart.Size.Y / 2
@@ -1022,14 +1084,18 @@ local function runFarm(token)
                 Position = rootPart.Position - Vector3.new(0, footOffset + 0.25, 0),
             }, workspace)
             farmPlatforms[support] = true
-            local continuing = pause(farm.stageDelay, token)
+            local continuing = holdStage(rootPart.CFrame, farm.stageDelay, token, sameCharacter)
             support:Destroy(); farmPlatforms[support] = nil
-            if not continuing then return end
+            if not continuing then
+                if not valid(token) then return end
+                interrupted = true
+                break
+            end
         end
         if not interrupted and sameCharacter() then
-            farmStatus("Chegando ao baú…")
+            farmStatus("Passando por cima da cachoeira e descendo no baú…")
             if not trigger.Parent then error("O baú não está mais disponível.", 0) end
-            if not travel(rootPart, trigger.CFrame, token, sameCharacter) then
+            if not travelAboveWater(rootPart, trigger.CFrame, farm.finalHeight, token, sameCharacter) then
                 if not valid(token) then return end
                 interrupted = true
             end
@@ -1037,14 +1103,33 @@ local function runFarm(token)
             rootPart.AssemblyLinearVelocity = Vector3.zero
             farm.trips = farm.trips + 1
             farmStatus("Aguardando recompensa e renascimento…")
-            deadline = os.clock() + 60
-            while valid(token) and sameCharacter() and os.clock() < deadline do
-                if not pause(0.2, token) then return end
+            local endChanged = false
+            for attempt = 1, 3 do
+                deadline = os.clock() + 8
+                while valid(token) and os.clock() < deadline do
+                    if not sameCharacter() or not trigger.Parent
+                        or (rootPart.Position - trigger.Position).Magnitude > 150 then
+                        endChanged = true
+                        break
+                    end
+                    if not pause(0.2, token) then return end
+                end
+                if endChanged or not valid(token) then break end
+                if attempt < 3 then
+                    farmStatus("Ainda vivo no final; tentando tocar o baú novamente (" .. (attempt + 1) .. "/3)…")
+                    if not travelAboveWater(rootPart, trigger.CFrame, 10, token, sameCharacter) then
+                        endChanged = true
+                        break
+                    end
+                end
             end
-            if valid(token) and sameCharacter() then
-                error("Sem renascimento após 60 s. A coleta do baú não foi confirmada.", 0)
+            if valid(token) and not endChanged then
+                farmStatus("Baú sem confirmação; reiniciando o percurso sem desligar o farm…")
             end
             end
+        end
+        if interrupted and valid(token) then
+            farmStatus("Percurso interrompido; aguardando personagem para retomar…")
         end
         if not pause(farm.respawnDelay, token) then return end
     end
@@ -1066,6 +1151,7 @@ setFarm = toggle(tabAutoFarm, "Auto Farm", function(enabled)
     end)
 end)
 numberField(tabAutoFarm, "Velocidade do percurso (studs/s)", 250, 50, 600, function(value) farm.speed = value end)
+numberField(tabAutoFarm, "Altura na cachoeira final", 60, 20, 150, function(value) farm.finalHeight = value end)
 numberField(tabAutoFarm, "Segundos em cada etapa", 2, 0.5, 10, function(value) farm.stageDelay = value end)
 numberField(tabAutoFarm, "Pausa entre percursos (segundos)", 5, 1, 30, function(value) farm.respawnDelay = value end)
 
