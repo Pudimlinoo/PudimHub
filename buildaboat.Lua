@@ -350,7 +350,7 @@ local resources = card("Ouro: indisponível", 52)
 section("BUILD A BOAT FOR TREASURE")
 card("Construa seu barco e navegue em busca do tesouro!\nPlayer: movimento. Auto Farm: percurso até o baú.", 82)
 section("ATALHOS")
-card("G · Abrir / recolher menu\nArraste o cabeçalho para mover a janela.", 62)
+card("G · Abrir / recolher menu\nF · Ativar / desativar colisão dos blocos\nH · Ancorar / desancorar todos os blocos\nArraste o cabeçalho para mover a janela.", 104)
 local center = homeItem("TextButton", {
     Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = Theme.DarkRed,
     BorderSizePixel = 0, Text = "Centralizar janela", TextColor3 = Theme.Text,
@@ -797,6 +797,7 @@ do
     connect(UserInputService.WindowFocusReleased, function() focused = false; stopFlight() end)
     connect(UserInputService.WindowFocused, function() focused = true end)
     connect(player.CharacterRemoving, stopFlight)
+
     connect(RunService.PreSimulation, function()
         local _, humanoid, rootPart = characterParts()
         if not enabled or not focused or movement.farming or not rootPart or not humanoid
@@ -1257,6 +1258,142 @@ control(tabSettings, "TextButton", "Fechar e remover HUD").Activated:Connect(fun
 storageStatus = control(tabSettings, "TextLabel", "Carregando preferências…", 76)
 control(tabSettings, "TextButton", "Salvar preferências agora").Activated:Connect(saveSettings)
 
+-- F alterna a colisao de todos os blocos replicados em Workspace.Blocks.
+local blockCollision = {enabled = false, parts = {}}
+local collisionStatus = create("TextLabel", {
+    Name = "CollisionStatus",
+    AnchorPoint = Vector2.new(0, 1),
+    Position = UDim2.new(0, 14, 1, -14),
+    Size = UDim2.fromOffset(220, 36),
+    BackgroundColor3 = Theme.Second,
+    BackgroundTransparency = 0.15,
+    BorderSizePixel = 0,
+    Text = "[F] Colisão: ATIVA",
+    TextColor3 = Color3.fromRGB(86, 205, 159),
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    ZIndex = 20,
+}, root)
+round(collisionStatus, 8)
+edge(collisionStatus)
+local function originalBlockCollision(part)
+    local saved = blockCollision.parts[part]
+    if saved then return saved.collide end
+    return part.CanCollide
+end
+local function setBlockCollision(part, value)
+    local saved = blockCollision.parts[part]
+    if saved then
+        saved.collide = value
+        part.CanCollide = false
+    else
+        part.CanCollide = value
+    end
+end
+do
+    local function restorePart(part, saved)
+        saved.connection:Disconnect()
+        blockCollision.parts[part] = nil
+        if part.Parent then part.CanCollide = saved.collide end
+    end
+    local function trackPart(part)
+        if not blockCollision.enabled or not part:IsA("BasePart") or blockCollision.parts[part] then return end
+        local folder = workspace:FindFirstChild("Blocks")
+        if not folder or not part:IsDescendantOf(folder) then return end
+        local saved = {collide = part.CanCollide}
+        blockCollision.parts[part] = saved
+        saved.connection = part:GetPropertyChangedSignal("CanCollide"):Connect(function()
+            if blockCollision.enabled and part.CanCollide then part.CanCollide = false end
+        end)
+        part.CanCollide = false
+    end
+    local function restoreAll()
+        for part, saved in pairs(blockCollision.parts) do restorePart(part, saved) end
+    end
+    local function setEnabled(value)
+        blockCollision.enabled = value
+        collisionStatus.Text = value and "[F] Colisão: DESATIVADA" or "[F] Colisão: ATIVA"
+        collisionStatus.TextColor3 = value and Theme.Red or Color3.fromRGB(86, 205, 159)
+        if value then
+            local folder = workspace:FindFirstChild("Blocks")
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do trackPart(part) end
+            end
+        else
+            restoreAll()
+        end
+    end
+    connect(workspace.DescendantAdded, function(object)
+        trackPart(object)
+    end)
+    connect(workspace.DescendantRemoving, function(object)
+        local saved = blockCollision.parts[object]
+        if saved then restorePart(object, saved) end
+    end)
+    connect(UserInputService.InputBegan, function(input, processed)
+        if processed or UserInputService:GetFocusedTextBox() then return end
+        if input.KeyCode == Enum.KeyCode.F then setEnabled(not blockCollision.enabled) end
+    end)
+    gui.Destroying:Connect(function()
+        blockCollision.enabled = false
+        restoreAll()
+    end)
+end
+
+-- H alterna todos os blocos entre ancorados e desancorados no cliente.
+do
+    local enabled, applied = false, false
+    local originals = setmetatable({}, {__mode = "k"})
+    local status = create("TextLabel", {
+        Name = "AnchorStatus",
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 14, 1, -56),
+        Size = UDim2.fromOffset(220, 36),
+        BackgroundColor3 = Theme.Second,
+        BackgroundTransparency = 0.15,
+        BorderSizePixel = 0,
+        Text = "[H] Ancorado: ORIGINAL",
+        TextColor3 = Theme.Muted,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        ZIndex = 20,
+    }, root)
+    round(status, 8)
+    edge(status)
+    local function apply(part)
+        if not applied or not part:IsA("BasePart") then return end
+        local folder = workspace:FindFirstChild("Blocks")
+        if not folder or not part:IsDescendantOf(folder) then return end
+        if originals[part] == nil then originals[part] = part.Anchored end
+        part.Anchored = enabled
+    end
+    connect(UserInputService.InputBegan, function(input, processed)
+        if processed or UserInputService:GetFocusedTextBox() then return end
+        if input.KeyCode ~= Enum.KeyCode.H then return end
+        enabled, applied = not enabled, true
+        local folder = workspace:FindFirstChild("Blocks")
+        if folder then
+            for _, part in ipairs(folder:GetDescendants()) do apply(part) end
+        end
+        status.Text = enabled and "[H] Ancorado: ATIVADO" or "[H] Ancorado: DESATIVADO"
+        status.TextColor3 = enabled and Color3.fromRGB(86, 205, 159) or Theme.Red
+    end)
+    connect(workspace.DescendantAdded, apply)
+    connect(workspace.DescendantRemoving, function(part)
+        if originals[part] ~= nil then
+            part.Anchored = originals[part]
+            originals[part] = nil
+        end
+    end)
+    gui.Destroying:Connect(function()
+        applied = false
+        for part, value in pairs(originals) do
+            if part.Parent then part.Anchored = value end
+        end
+        table.clear(originals)
+    end)
+end
+
 local releaseMagnet
 do
     local magnet = {enabled = false, holding = false, toggleMode = false, autoCapture = false, radius = 20, reach = 150,
@@ -1268,7 +1405,7 @@ do
     local autoIgnored = setmetatable({}, {__mode = "k"})
     local modeNames = {"Normal", "Centralizar no cursor", "Círculo", "Órbita",
         "Órbita no jogador", "Círculo no jogador", "Tornado", "Tornado no cursor", "Linha reta", "Parede", "Esfera",
-        "Caixa no jogador", "Esfera no jogador"}
+        "Caixa no jogador", "Esfera no jogador", "Girar no próprio eixo", "Foguete parado"}
     local function followsPlayer(mode) return (mode >= 5 and mode <= 7) or mode == 12 or mode == 13 end
     local mouse = player:GetMouse()
     local tornadoCenter
@@ -1305,12 +1442,54 @@ do
                 -- As pecas originais sao restauradas, inclusive as que ja nao colidiam.
                 local collide = not ghost and saved.collide or false
                 local touch = not ghost and saved.touch or false
-                if part.CanCollide ~= collide then part.CanCollide = collide end
+                setBlockCollision(part, collide)
                 if part.CanTouch ~= touch then part.CanTouch = touch end
             end
         end
     end
+    local function clearStationaryEffect(item)
+        if item.spinMotor then item.spinMotor:Destroy(); item.spinMotor = nil end
+        if item.spinPart then
+            if item.spinPart.Parent then
+                item.spinPart.AssemblyAngularVelocity = item.spinAngular or Vector3.zero
+            end
+            item.spinPart, item.spinAngular = nil, nil
+        end
+        if item.rocketPart then
+            local part = item.rocketPart
+            if part.Parent then
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+                part.Anchored = item.rocketAnchored
+            end
+            item.rocketPart, item.rocketAnchored = nil, nil
+        end
+        if item.exhaustAttachment then item.exhaustAttachment:Destroy() end
+        item.exhaustAttachment, item.exhaust = nil, nil
+        item.fixedFrame, item.effectTime, item.effectMode = nil, nil, nil
+    end
+    local function stationaryEffect(item, dt)
+        if item.align then item.align.Enabled = false end
+        if item.lift then item.lift.Enabled = false end
+        if item.effectMode ~= 15 then
+            clearStationaryEffect(item)
+            item.effectMode = 15
+            item.fixedFrame = item.part.CFrame
+            item.effectTime = 0
+            item.rocketPart = item.part
+            item.rocketAnchored = item.part.Anchored
+        end
+        item.effectTime = item.effectTime + dt
+        item.part.Anchored = true
+        item.part.CFrame = item.fixedFrame
+        item.part.AssemblyLinearVelocity = Vector3.zero
+        item.part.AssemblyAngularVelocity = Vector3.zero
+        item.command = item.part.AssemblyCenterOfMass
+        item.lastPosition = item.command
+        item.stalled = 0
+    end
     local function removeActuators(item)
+        clearStationaryEffect(item)
         if item.align then item.align:Destroy() end
         if item.lift then item.lift:Destroy() end
         if item.attachment then item.attachment:Destroy() end
@@ -1361,7 +1540,8 @@ do
     local playerModeButton = control(tabMagnetPlayer, "TextButton", "Modo: Órbita no jogador  ▾")
     playerModeButton:SetAttribute("SearchText", "Modo ao redor do jogador")
     local function setMode(value)
-        if value == 14 then value = 2 end -- Compatibilidade com o antigo modo automatico.
+
+        for _, item in ipairs(magnet.items) do clearStationaryEffect(item) end
         magnet.mode = math.clamp(math.floor(value), 1, #modeNames)
 
         for _, item in ipairs(magnet.items) do updateCollisions(item, magnet.ghost or magnet.mode == 11 or magnet.mode == 13) end
@@ -1373,7 +1553,7 @@ do
             playerMode = magnet.mode
             playerModeButton.Text = "Modo: " .. modeNames[playerMode] .. "  ▾"
         end
-        if not magnet.capturing and not magnet.autoCapture and (not magnet.holding or (not magnet.toggleMode and not followsPlayer(magnet.mode)
+        if not magnet.capturing and not magnet.autoCapture and (not magnet.holding or (not magnet.toggleMode and magnet.mode ~= 14 and magnet.mode ~= 15 and not followsPlayer(magnet.mode)
             and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1))) then releaseMagnet() end
         preferencesChanged()
     end
@@ -1454,7 +1634,7 @@ do
     end)
 
     local function formationOffset(mode, index, count, radius, angle, original, tornadoHeight)
-        if mode == 1 then return original end
+        if mode == 1 or mode == 14 then return original end
         if mode == 2 then return Vector3.new(0, 0, 0) end
         if mode == 12 or mode == 13 then
             local y = 1 - 2 * (index - 0.5) / math.max(1, count)
@@ -1659,9 +1839,9 @@ do
                     local collisions = {}
                     for _, connected in ipairs(joined) do
                         seen[connected] = true
-                        collisions[connected] = {collide = connected.CanCollide, touch = connected.CanTouch}
+                        collisions[connected] = {collide = originalBlockCollision(connected), touch = connected.CanTouch}
                     end
-                    collisions[assembly] = {collide = assembly.CanCollide, touch = assembly.CanTouch}
+                    collisions[assembly] = {collide = originalBlockCollision(assembly), touch = assembly.CanTouch}
                     local massCenter = assembly.AssemblyCenterOfMass
                     local highlight = #magnet.items < 24 and create("Highlight", {Name = "PudimHub_MagnetHighlight",
                         Adornee = assembly, FillColor = Theme.Red, FillTransparency = 0.85,
@@ -1753,7 +1933,7 @@ do
             if object:IsDescendantOf(frame) and frame.Visible then return end
         end
         if magnet.autoCapture then releaseNearestPile(position); return end
-        if magnet.toggleMode and (magnet.holding or magnet.capturing) then
+        if (magnet.toggleMode or magnet.mode == 14 or magnet.mode == 15) and (magnet.holding or magnet.capturing) then
             releaseMagnet()
             return
         end
@@ -1765,13 +1945,45 @@ do
         end
     end)
     connect(UserInputService.InputEnded, function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and not magnet.autoCapture and not magnet.toggleMode and not followsPlayer(magnet.mode)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and not magnet.autoCapture and not magnet.toggleMode and magnet.mode ~= 14 and magnet.mode ~= 15 and not followsPlayer(magnet.mode)
             and (magnet.holding or magnet.capturing) then releaseMagnet() end
     end)
     connect(UserInputService.WindowFocusReleased, function()
-        if not magnet.autoCapture and not magnet.toggleMode and not followsPlayer(magnet.mode) then releaseMagnet() end
+        if not magnet.autoCapture and not magnet.toggleMode and magnet.mode ~= 14 and magnet.mode ~= 15 and not followsPlayer(magnet.mode) then releaseMagnet() end
     end)
     connect(player.CharacterRemoving, releaseMagnet)
+    local rocketOverlap = OverlapParams.new()
+    rocketOverlap.FilterType = Enum.RaycastFilterType.Include
+    rocketOverlap.MaxParts = 1
+    connect(RunService.PreSimulation, function()
+        if not magnet.enabled or not magnet.holding or magnet.mode ~= 15 then return end
+        local character, humanoid, rootPart = characterParts()
+        if not character or not humanoid or humanoid.Health <= 0 or not rootPart
+            or rootPart.Anchored or humanoid.SeatPart or farm.enabled then return end
+        rocketOverlap.FilterDescendantsInstances = {character}
+        for _, item in ipairs(magnet.items) do
+            local part = item.rocketPart
+            if part and part:IsDescendantOf(workspace) and permitted(part, true) then
+                part.Anchored = true
+                part.CFrame = item.fixedFrame
+                if not blockCollision.enabled and not magnet.ghost then
+                    for member in pairs(item.collisions) do
+                        if member:IsDescendantOf(workspace) and member.CanCollide
+                            and #workspace:GetPartBoundsInBox(member.CFrame,
+                                member.Size + Vector3.new(0.2, 0.2, 0.2), rocketOverlap) > 0 then
+                            -- Impulso local no personagem ao tocar a superficie do conjunto.
+                            local direction = item.fixedFrame.LookVector
+                            local speed = math.min(magnet.speed, item.effectTime * math.max(80, magnet.speed))
+                            local velocity = rootPart.AssemblyLinearVelocity
+                            rootPart.AssemblyLinearVelocity = velocity
+                                + direction * math.max(0, speed - velocity:Dot(direction))
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end)
     connect(RunService.PreSimulation, function()
         if not magnet.enabled or (not magnet.ghost and magnet.mode ~= 11 and magnet.mode ~= 13) or not (magnet.holding or magnet.capturing) then return end
         for _, item in ipairs(magnet.items) do updateCollisions(item, true) end
@@ -1922,12 +2134,14 @@ do
                 -- Streaming pode retirar o bloco temporariamente; conserva a selecao ate voltar.
                 if item.align and item.align.Parent then item.align.Enabled = false end
                 if item.lift and item.lift.Parent then item.lift.Enabled = false end
+                clearStationaryEffect(item)
                 waiting = waiting + 1
             elseif not permitted(item.part, true) or not permitted(assembly, true) then
                 -- Uma cadeira ocupada pode ligar temporariamente o bloco ao personagem.
                 -- Suspende a forca sem esquecer a selecao; retoma quando estiver livre.
                 if item.align then item.align.Enabled = false end
                 if item.lift then item.lift.Enabled = false end
+                clearStationaryEffect(item)
                 paused = paused + 1
             elseif occupiedAssemblies[assembly] then
                 -- Conjuntos unidos durante o arraste usam apenas um motor.
@@ -1936,11 +2150,19 @@ do
                     if not keeper.collisions[part] then keeper.collisions[part] = saved end
                 end
                 discard(item, true); table.remove(magnet.items, index)
-            elseif assembly.Anchored or item.part.Anchored then
+            elseif (assembly.Anchored or item.part.Anchored) and magnet.mode ~= 15 then
                 occupiedAssemblies[assembly] = item
                 if item.align then item.align.Enabled = false end
                 if item.lift then item.lift.Enabled = false end
+                clearStationaryEffect(item)
                 paused = paused + 1
+            elseif magnet.mode == 15 then
+                occupiedAssemblies[assembly] = item
+                if item.part ~= assembly then
+                    removeActuators(item)
+                    item.part = assembly
+                end
+                stationaryEffect(item, dt)
             else
                 occupiedAssemblies[assembly] = item
                 if item.part ~= assembly then
@@ -2002,6 +2224,24 @@ do
                     item.stalled = item.stalled + dt
                 else item.stalled = 0 end
                 if item.stalled > 2 then unresponsive = unresponsive + 1 end
+                if magnet.mode == 14 then
+                    if not item.spinPart then
+                        item.spinPart = item.part
+                        item.spinAngular = item.part.AssemblyAngularVelocity
+                    end
+                    -- Rotacao fisica nos tres eixos; AlignPosition continua seguindo o cursor.
+                    local spinRate = math.rad(math.max(720, magnet.orbitRate * 12))
+                    if not item.spinMotor or item.spinMotor.Parent ~= item.part then
+                        item.spinMotor = create("AngularVelocity", {
+                            Name = "PudimHub_SpinMotor", Attachment0 = item.attachment,
+                            RelativeTo = Enum.ActuatorRelativeTo.World,
+                            ReactionTorqueEnabled = false,
+                        }, item.part)
+                    end
+                    item.spinMotor.MaxTorque = math.min(1000000000,
+                        math.max(1000000, item.part.AssemblyMass * item.part.Size.Magnitude ^ 2 * spinRate * 100))
+                    item.spinMotor.AngularVelocity = Vector3.new(1, 1.31, 1.73).Unit * spinRate
+                end
                 item.lastPosition = current
             end
         end
@@ -2011,6 +2251,7 @@ do
             magnetStatus.Text = modeNames[magnet.mode] .. " • selecionados: " .. #magnet.items
                 .. ((magnet.mode == 11 or magnet.mode == 13) and string.format(" • raio: %.1f",
                     magnet.mode == 11 and magnet.effectiveSphereRadius or magnet.effectivePlayerRadius) or "")
+                .. ((magnet.mode == 14 or magnet.mode == 15) and " • clique: prender/soltar" or "")
                 .. (recovering > 0 and (" • recuperando: " .. recovering) or "")
                 .. (waiting > 0 and (" • aguardando retorno: " .. waiting) or "")
                 .. (unresponsive > 0 and (" • sem acompanhar: " .. unresponsive) or "")
