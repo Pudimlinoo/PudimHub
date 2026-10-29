@@ -361,4 +361,4 @@ Connect(RunService.Heartbeat, function(dt)
     else movementInfo.Text = "Aguardando personagem..." end
 end)
 Resize()
--- loadstring(game:HttpGet("https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/FlingThings.lua"))()
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/script.lua"))()
