@@ -144,7 +144,7 @@ local function StopAll()
     for _, refresh in pairs(Refresh) do refresh() end
 end
 
--- HUD v018: páginas, telemetria e controles de mouse/toque.
+-- HUD v018: páginas, telemetria e controles de mouse.
 local function New(class, parent, props)
     local object = Instance.new(class)
     for key, value in pairs(props or {}) do object[key] = value end
@@ -257,7 +257,7 @@ local function Slider(parent, title, key, minimum, maximum)
         Configs[key]=math.floor(minimum+(maximum-minimum)*amount+0.5); Refresh[key]()
     end
     Connect(rail.InputBegan,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=input; scrollWasEnabled=parent.ScrollingEnabled; parent.ScrollingEnabled=false; Update(input) end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=input; scrollWasEnabled=parent.ScrollingEnabled; parent.ScrollingEnabled=false; Update(input) end
     end)
     Connect(UserInputService.InputChanged,function(input)
         if dragging and (input==dragging or input.UserInputType==Enum.UserInputType.MouseMovement) then Update(input) end
@@ -354,7 +354,7 @@ Pages[1].Page.Visible=true; Pages[1].Button.BackgroundColor3=Color3.fromRGB(95,1
 local reopen=Button(ScreenGui,"PUDIM",UDim2.new(0,12,0.5,-20),UDim2.fromOffset(72,40),function() MainFrame.Visible=not MainFrame.Visible end)
 local drag, dragStart, panelStart
 Connect(TopBar.InputBegan,function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then drag=input; dragStart=input.Position; panelStart=MainFrame.Position end
+    if input.UserInputType==Enum.UserInputType.MouseButton1 then drag=input; dragStart=input.Position; panelStart=MainFrame.Position end
 end)
 Connect(UserInputService.InputEnded,function(input) if input==drag then drag=nil end end)
 Connect(UserInputService.InputChanged,function(input)

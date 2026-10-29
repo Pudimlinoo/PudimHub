@@ -353,7 +353,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 20
 Instance.new("UICorner", title).CornerRadius = UDim.new(0,16)
 
--- Cabeçalho e arraste com mouse/toque
+-- Cabeçalho e arraste com mouse
 title.Size = UDim2.new(1, 0, 0, 64)
 title.BackgroundColor3 = Theme.Second
 title.BackgroundTransparency = 0.15
@@ -369,16 +369,15 @@ subtitle.Text = "V033  /  BLOX FRUITS"
 subtitle.Font = Enum.Font.GothamMedium
 subtitle.TextSize = 11
 subtitle.TextColor3 = Color3.fromRGB(156, 161, 177)
-local dragging, dragStart, startPos, dragTouch
+local dragging, dragStart, startPos
 title.Active = true
 title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging, dragStart, startPos = true, input.Position, frame.Position
-        dragTouch = input.UserInputType == Enum.UserInputType.Touch and input or nil
     end
 end)
 local dragChanged = HUD.connect(UserInputService.InputChanged, function(input)
-    if dragging and (input == dragTouch or (not dragTouch and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - dragStart
         local cam = workspace.CurrentCamera
         if not cam then return end
@@ -392,8 +391,8 @@ local dragChanged = HUD.connect(UserInputService.InputChanged, function(input)
     end
 end)
 local dragEnded = HUD.connect(UserInputService.InputEnded, function(input)
-    if input == dragTouch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging, dragTouch = false, nil
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
     end
 end)
 gui.Destroying:Connect(function() dragChanged:Disconnect(); dragEnded:Disconnect() end)
@@ -620,7 +619,7 @@ local function criarSlider(txt, min, max, init, y, p, cb)
         p.ScrollingEnabled = scrollWasEnabled
     end
     hit.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
             if activeInput then return end
             activeInput = input
             scrollWasEnabled = p.ScrollingEnabled
@@ -2094,7 +2093,7 @@ do
     if fruitESPEnabled then HUD.setFruitESP(true) end
 end
 
--- ================= TOGGLE MENU ANIMADO NO G & BOTÃO MOBILE =================
+-- ================= TOGGLE MENU ANIMADO NO G =================
 
 local menuOpen = true
 local busy = false
@@ -2150,7 +2149,7 @@ HUD.connect(UserInputService.InputBegan, function(input, gp)
 	end
 end)
 
--- Botão mobile removido. Abrir/recolher pela tecla G.
+-- Abrir/recolher pela tecla G.
 -- Iluminação original preservada. Sem destruição de Atmosphere ou ativação de sombras na abertura.
 -- ================= ZOOM =================
 local Players = game:GetService("Players")
@@ -3252,7 +3251,7 @@ do
     clampWindow()
     HUD.connect(frame:GetPropertyChangedSignal("Position"),HUD.preferencesChanged)
     HUD.connect(UserInputService.InputEnded,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then clampWindow() end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 then clampWindow() end
     end)
     HUD.resetExtras=function()
         HUD.keys={menu="G",players="F",npcs="H",cursor="B"}
@@ -3342,10 +3341,10 @@ do
         button.MouseEnter:Connect(function() hovering=true; feedback() end)
         button.MouseLeave:Connect(function() hovering=false; pressed=false; feedback() end)
         button.InputBegan:Connect(function(input)
-            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then pressed=true; feedback() end
+            if input.UserInputType==Enum.UserInputType.MouseButton1 then pressed=true; feedback() end
         end)
         button.InputEnded:Connect(function(input)
-            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then pressed=false; feedback() end
+            if input.UserInputType==Enum.UserInputType.MouseButton1 then pressed=false; feedback() end
         end)
     end
     for _,item in ipairs(frame:GetDescendants()) do style(item) end

@@ -77,35 +77,56 @@ local function Button(parent, label, position, size, callback, color)
     Connect(b.Activated, callback)
     return b
 end
-Button(MainFrame, "PARAR TUDO", UDim2.fromOffset(154,76), UDim2.fromOffset(120,32), function() StopAll() end, Color3.fromRGB(109,42,51))
-Button(TopBar, "—", UDim2.new(1,-38,0,17), UDim2.fromOffset(30,30), function() MainFrame.Visible = false end)
-Button(MainFrame, "ENCERRAR", UDim2.fromOffset(282,76), UDim2.fromOffset(100,32), function() Session.Destroy() end)
-local sidebar=New("ScrollingFrame",MainFrame,{Position=UDim2.fromOffset(12,76),Size=UDim2.new(0,132,1,-124),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=2,ScrollBarImageColor3=Theme.Accent})
+Button(MainFrame, "PARAR TUDO", UDim2.new(0,12,1,-140), UDim2.fromOffset(126,32), function() StopAll() end, Color3.fromRGB(109,42,51))
+local minimize = Button(TopBar, "—", UDim2.new(1,-38,0,17), UDim2.fromOffset(30,30), function() MainFrame.Visible = false end)
+Button(MainFrame, "ENCERRAR", UDim2.new(0,12,1,-100), UDim2.fromOffset(126,32), function() Session.Destroy() end)
+local sidebar=New("ScrollingFrame",MainFrame,{Position=UDim2.fromOffset(12,76),Size=UDim2.new(0,132,1,-228),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=2,ScrollBarImageColor3=Theme.Accent})
 New("UIListLayout",sidebar,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
 local ContentContainer = New("Frame", MainFrame, {Position = UDim2.fromOffset(154,122), Size = UDim2.new(1,-166,1,-180), BackgroundTransparency = 1})
 local footer = New("Frame", MainFrame, {Position = UDim2.new(0,12,1,-48), Size = UDim2.new(1,-24,0,40), BackgroundColor3 = Color3.fromRGB(13,8,11), BorderSizePixel = 0})
 local status = Text(footer, "Pronto para iniciar", 12, UDim2.fromOffset(10,2), UDim2.new(1,-30,0,19), Theme.Accent)
 local substatus = Text(footer, "0 = movimento original do personagem", 10, UDim2.fromOffset(10,23), UDim2.new(1,-30,0,16), Color3.fromRGB(156,161,177))
 local Pages, SelectedPage = {}, nil
+local search = Round(New("TextBox", MainFrame, {Position=UDim2.fromOffset(154,76), Size=UDim2.new(1,-166,0,34),
+    BackgroundColor3=Color3.fromRGB(13,8,11), BorderSizePixel=0, Text="", PlaceholderText="Buscar nesta aba…",
+    TextColor3=Theme.Text, PlaceholderColor3=Color3.fromRGB(156,161,177), Font=Enum.Font.GothamMedium,
+    TextSize=12, ClearTextOnFocus=false, TextXAlignment=Enum.TextXAlignment.Left}), 8)
+New("UIPadding", search, {PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12)})
+local function FilterPage()
+    if not SelectedPage then return end
+    local query = search.Text:lower():match("^%s*(.-)%s*$")
+    for _, item in ipairs(SelectedPage:GetChildren()) do
+        if item:IsA("Frame") and item.Name ~= "PageHeader" then
+            local found = query == ""
+            for _, label in ipairs(item:GetDescendants()) do
+                if (label:IsA("TextLabel") or label:IsA("TextButton")) and label.Text:lower():find(query,1,true) then found = true end
+            end
+            item.Visible = found
+        end
+    end
+    SelectedPage.CanvasPosition = Vector2.zero
+end
+Connect(search:GetPropertyChangedSignal("Text"), FilterPage)
 local function Page(label, subtitle)
     local index = #Pages + 1
     local b
     local page = New("ScrollingFrame", ContentContainer, {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, BorderSizePixel = 0,
         Visible = false, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent})
     New("UIListLayout", page, {Padding = UDim.new(0,9), SortOrder = Enum.SortOrder.LayoutOrder})
-    local header = New("Frame", page, {Size = UDim2.new(1,-8,0,52), BackgroundTransparency = 1})
+    local header = New("Frame", page, {Name="PageHeader", LayoutOrder=0, Size = UDim2.new(1,-8,0,52), BackgroundTransparency = 1})
     Text(header, label, 21, UDim2.new(), UDim2.new(1,0,0,28))
     Text(header, subtitle, 11, UDim2.fromOffset(0,31), UDim2.new(1,0,0,18), Color3.fromRGB(156,161,177))
     b = Button(sidebar, label, UDim2.new(), UDim2.new(1,-6,0,42), function()
         for _, entry in ipairs(Pages) do entry.Page.Visible = false; entry.Button.BackgroundColor3 = Theme.Element; entry.Button.TextColor3 = Theme.Text end
         page.Visible = true; b.BackgroundColor3 = Color3.fromRGB(95,10,25); b.TextColor3 = Theme.Accent; SelectedPage = page
+        search.Text = ""; FilterPage()
     end, Theme.Element)
     b.LayoutOrder=index
     table.insert(Pages, {Page = page, Button = b})
     return page
 end
 local function Card(parent, height)
-    local card=Round(New("Frame", parent, {Size = UDim2.new(1,-8,0,height), BackgroundColor3 = Color3.fromRGB(13,8,11), BackgroundTransparency=0.2, BorderSizePixel = 0}), 8)
+    local card=Round(New("Frame", parent, {LayoutOrder=#parent:GetChildren(), Size = UDim2.new(1,-8,0,height), BackgroundColor3 = Color3.fromRGB(13,8,11), BackgroundTransparency=0.2, BorderSizePixel = 0}), 10)
     New("UIStroke",card,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=Theme.Accent,Thickness=1,Transparency=0.8})
     return card
 end
@@ -152,7 +173,7 @@ local function Slider(parent, title, key, minimum, maximum)
         Configs[key]=math.floor(minimum+(maximum-minimum)*amount+0.5); Refresh[key]()
     end
     Connect(rail.InputBegan,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=input; scrollWasEnabled=parent.ScrollingEnabled; parent.ScrollingEnabled=false; Update(input) end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=input; scrollWasEnabled=parent.ScrollingEnabled; parent.ScrollingEnabled=false; Update(input) end
     end)
     Connect(UserInputService.InputChanged,function(input)
         if dragging and (input==dragging or (dragging.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then Update(input) end
@@ -173,13 +194,52 @@ local function Info(parent, title, description)
     body.TextTruncate = Enum.TextTruncate.None
     return body
 end
-Info(Home, "BEM-VINDO, " .. Player.DisplayName, "Use a aba Player para ajustar velocidade, pulo e voo. Parar tudo restaura o movimento original.")
-local movementInfo = Info(Home, "PERSONAGEM", "Aguardando personagem...")
-Info(Home, "CONTROLES", "H: abrir/fechar painel • G: voo\nWASD: direção • Espaço: subir • Ctrl: descer\nCelular: direcional e botões SUBIR / DESCER.")
+local profileCard = Card(Home, 84)
+profileCard.Name = "PlayerProfile"
+local avatar = Round(New("ImageLabel", profileCard, {Name="PlayerAvatar", Size=UDim2.fromOffset(56,56),
+    Position=UDim2.new(0,12,0.5,-28), BackgroundColor3=Theme.Element, BorderSizePixel=0, Image="",
+    ScaleType=Enum.ScaleType.Crop}), 28)
+New("UIStroke", avatar, {Color=Theme.Accent, Thickness=1, Transparency=0.35})
+local profile = Text(profileCard, Player.DisplayName .. "  (@" .. Player.Name .. ")", 13,
+    UDim2.fromOffset(80,8), UDim2.new(1,-94,1,-16))
+profile.TextWrapped = true
+profile.TextTruncate = Enum.TextTruncate.None
+local function LoadAvatar()
+    Session.AvatarRevision = (Session.AvatarRevision or 0) + 1
+    local revision = Session.AvatarRevision
+    task.spawn(function()
+        for attempt=1,3 do
+            if not Session.Alive or revision ~= Session.AvatarRevision then return end
+            local ok, content, ready = pcall(function()
+                return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+            end)
+            if not Session.Alive or revision ~= Session.AvatarRevision or not avatar.Parent then return end
+            if ok and type(content)=="string" and content~="" then avatar.Image=content; if ready then return end end
+            if attempt<3 then task.wait(2) end
+        end
+    end)
+end
+LoadAvatar()
+Connect(Player.CharacterAppearanceLoaded, LoadAvatar)
+local healthCard = Card(Home, 62)
+local healthLabel = Text(healthCard, "Vida: aguardando personagem", 13, UDim2.fromOffset(12,8), UDim2.new(1,-24,0,30))
+local healthTrack = Round(New("Frame", healthCard, {Position=UDim2.new(0,12,1,-14), Size=UDim2.new(1,-24,0,4),
+    BackgroundColor3=Theme.Element, BorderSizePixel=0}), 2)
+local healthFill = Round(New("Frame", healthTrack, {Size=UDim2.fromScale(0,1), BorderSizePixel=0,
+    BackgroundColor3=Color3.fromRGB(86,205,159)}), 2)
+local movementCard = Card(Home, 60)
+local movementInfo = Text(movementCard, "Aguardando personagem...", 12, UDim2.fromOffset(12,8), UDim2.new(1,-24,1,-16))
+movementInfo.TextWrapped = true
+Info(Home, "ATALHOS", "H: abrir/fechar painel • G: voo\nWASD: direção • Espaço: subir • Ctrl: descer")
+Info(Home, "MOVIMENTO", "Arraste as barras ou digite um valor. Velocidade e pulo em 0 mantêm o padrão do personagem. O mouse fica livre enquanto o painel está aberto.")
+local centerCard = Card(Home, 48)
+Button(centerCard, "Centralizar janela", UDim2.fromOffset(10,7), UDim2.new(1,-20,0,34), function()
+    MainFrame.Position = UDim2.fromScale(0.5,0.5)
+end)
 Info(PlayerTab, "ZERO = PADRÃO", "Os valores são extras acima do movimento original. Ex.: velocidade original 16 + extra 10 = 26. Pulo usa força ou altura, conforme o jogo.")
 Slider(PlayerTab, "Velocidade extra", "SpeedExtra", 0, 150)
 Slider(PlayerTab, "Pulo extra (força / altura)", "JumpExtra", 0, 150)
-Toggle(PlayerTab, "Voo (G)", "WASD / direcional • Espaço / Ctrl para altura.", "Fly")
+Toggle(PlayerTab, "Voo (G)", "WASD • Espaço / Ctrl para altura.", "Fly")
 Slider(PlayerTab, "Velocidade do voo", "FlySpeed", 1, 200)
 Slider(Settings, "Escala do painel (%)", "UIScale", 60, 120)
 Info(Settings, "ATALHOS", "H abre ou fecha o painel. O botão PUDIM também reabre. G liga ou desliga o voo. Atalhos não atuam enquanto você digita.")
@@ -190,16 +250,17 @@ Button(resetCard, "RESTAURAR PADRÕES", UDim2.fromOffset(10,9), UDim2.new(1,-20,
     SetConfig("UIScale", 100)
 end)
 Pages[1].Page.Visible = true
+SelectedPage = Home
 Pages[1].Button.BackgroundColor3 = Color3.fromRGB(95,10,25)
 Pages[1].Button.TextColor3 = Theme.Accent
 Button(ScreenGui, "PUDIM", UDim2.new(0,12,0.5,-20), UDim2.fromOffset(72,40), function()
     MainFrame.Visible = not MainFrame.Visible
 end)
--- Painel adaptado à área útil; arraste pelo cabeçalho com mouse ou toque.
+-- Painel adaptado à área útil; arraste pelo cabeçalho com mouse.
 TopBar.Active = true
 local drag, dragStart, panelStart
 Connect(TopBar.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
         drag, dragStart, panelStart = input, input.Position, MainFrame.AbsolutePosition + MainFrame.AbsoluteSize / 2
     end
 end)
@@ -249,23 +310,7 @@ local function ApplyExtra(h, property, extra)
     h[property] = originals.Values[property] + extra
 end
 local flight
-local upInput, downInput
-local upButton = Button(ScreenGui, "SUBIR", UDim2.new(1,-100,0.5,-50), UDim2.fromOffset(88,42), function() end)
-local downButton = Button(ScreenGui, "DESCER", UDim2.new(1,-100,0.5,0), UDim2.fromOffset(88,42), function() end)
-upButton.Visible, downButton.Visible = false, false
-local function IsPress(input)
-    return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
-end
-Connect(upButton.InputBegan, function(input) if IsPress(input) then upInput = input end end)
-Connect(downButton.InputBegan, function(input) if IsPress(input) then downInput = input end end)
-Connect(UserInputService.InputEnded, function(input)
-    if input == upInput then upInput = nil end
-    if input == downInput then downInput = nil end
-end)
-Connect(UserInputService.WindowFocusReleased, function() upInput, downInput = nil, nil end)
 EndFly = function()
-    upInput, downInput = nil, nil
-    upButton.Visible, downButton.Visible = false, false
     if not flight then return end
     flight.Velocity:Destroy()
     flight.Orientation:Destroy()
@@ -306,19 +351,15 @@ local function UpdatePlayer()
         h.PlatformStand = true
         h.AutoRotate = false
     end
-    upButton.Visible, downButton.Visible = true, true
     local move = Vector3.zero
     if not UserInputService:GetFocusedTextBox() then
         local x = (UserInputService:IsKeyDown(Enum.KeyCode.D) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.A) and 1 or 0)
         local z = (UserInputService:IsKeyDown(Enum.KeyCode.W) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.S) and 1 or 0)
         if x ~= 0 or z ~= 0 then
             move = camera.CFrame.RightVector * x + camera.CFrame.LookVector * z
-        else
-            -- O direcional móvel já fornece MoveDirection em coordenadas do mundo.
-            move = h.MoveDirection
         end
-        local y = ((upInput or UserInputService:IsKeyDown(Enum.KeyCode.Space)) and 1 or 0)
-            - ((downInput or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)) and 1 or 0)
+        local y = (UserInputService:IsKeyDown(Enum.KeyCode.Space) and 1 or 0)
+            - (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) and 1 or 0)
         move = move + Vector3.yAxis * y
     end
     if move.Magnitude > 1 then move = move.Unit end
@@ -328,6 +369,8 @@ end
 Session.Destroy = function()
     if not Session.Alive then return end
     Session.Alive = false
+    RunService:UnbindFromRenderStep("PudimHubFTAPCursor")
+    if Session.RestoreMouse then Session.RestoreMouse() end
     EndFly()
     RestoreMovement()
     for _, connection in ipairs(Session.Connections) do connection:Disconnect() end
@@ -346,18 +389,55 @@ Connect(UserInputService.InputBegan, function(input, processed)
     if input.KeyCode == Enum.KeyCode.G then SetConfig("Fly", not Configs.Fly)
     elseif input.KeyCode == Enum.KeyCode.H then MainFrame.Visible = not MainFrame.Visible end
 end)
-local elapsed = 0
+-- Modal libera o cursor em primeira pessoa; a atualização após a câmera
+-- mantém o mouse livre caso o controle do jogo reaplique o bloqueio.
+local savedMouse
+Session.RestoreMouse = function()
+    minimize.Modal = false
+    if savedMouse then
+        UserInputService.MouseBehavior = savedMouse.Behavior
+        UserInputService.MouseIconEnabled = savedMouse.Icon
+        savedMouse = nil
+    end
+end
+local function SyncMouse()
+    if not Session.Alive or not MainFrame.Visible or not ScreenGui.Enabled then
+        Session.RestoreMouse()
+        return
+    end
+    if not savedMouse then
+        savedMouse = {Behavior=UserInputService.MouseBehavior, Icon=UserInputService.MouseIconEnabled}
+    end
+    minimize.Modal = true
+    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    UserInputService.MouseIconEnabled = true
+end
+Connect(MainFrame:GetPropertyChangedSignal("Visible"), SyncMouse)
+Connect(ScreenGui:GetPropertyChangedSignal("Enabled"), SyncMouse)
+RunService:BindToRenderStep("PudimHubFTAPCursor", Enum.RenderPriority.Last.Value + 1, SyncMouse)
+SyncMouse()
+local elapsed, frames = 0, 0
+local sessionStart = os.clock()
 Connect(RunService.Heartbeat, function(dt)
     UpdatePlayer()
     elapsed = elapsed + dt
+    frames = frames + 1
     if elapsed < 0.2 then return end
-    elapsed = 0
+    local fps = math.floor(frames / elapsed + 0.5)
+    elapsed, frames = 0, 0
     Resize()
     local h = Humanoid()
+    local ratio = h and math.clamp(h.Health/math.max(h.MaxHealth,1),0,1) or 0
+    healthLabel.Text = h and string.format("Vida  %.0f / %.0f", h.Health, h.MaxHealth) or "Aguardando respawn…"
+    healthFill.Size = UDim2.fromScale(ratio,1)
+    healthFill.BackgroundColor3 = ratio < 0.3 and Theme.Accent or Color3.fromRGB(86,205,159)
+    profile.Text = Player.DisplayName .. "  (@" .. Player.Name .. ")\n" .. (Player.Team and Player.Team.Name or "Sem time")
+    local seconds = math.floor(os.clock()-sessionStart)
+    substatus.Text = string.format("%d FPS / %d jogadores / %02d:%02d nesta sessão / H: menu", fps, #Players:GetPlayers(), math.floor(seconds/60), seconds%60)
     status.Text = flight and "Voo ativo" or (Configs.Fly and "Voo aguardando personagem livre" or "Pronto")
     if h then
-        movementInfo.Text = string.format("Velocidade: %.1f • %s: %.1f\nVida: %.0f / %.0f", h.WalkSpeed,
-            h.UseJumpPower and "Força do pulo" or "Altura do pulo", h.UseJumpPower and h.JumpPower or h.JumpHeight, h.Health, h.MaxHealth)
+        movementInfo.Text = string.format("Velocidade: %.1f • %s: %.1f\nFling Things and People", h.WalkSpeed,
+            h.UseJumpPower and "Força do pulo" or "Altura do pulo", h.UseJumpPower and h.JumpPower or h.JumpHeight)
     else movementInfo.Text = "Aguardando personagem..." end
 end)
 Resize()

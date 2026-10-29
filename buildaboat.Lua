@@ -254,30 +254,27 @@ end
 connect(root:GetPropertyChangedSignal("AbsoluteSize"), fitHUD)
 fitHUD()
 
-local dragging, dragTouch, dragStart, startPosition
+local dragging, dragStart, startPosition
 title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = true
-        dragTouch = input.UserInputType == Enum.UserInputType.Touch and input or nil
         dragStart = input.Position
         startPosition = frame.Position
     end
 end)
 connect(UserInputService.InputChanged, function(input)
-    if dragging and (input == dragTouch or
-        (not dragTouch and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - dragStart
         placeInside(startPosition.X.Offset + delta.X, startPosition.Y.Offset + delta.Y)
     end
 end)
 connect(UserInputService.InputEnded, function(input)
-    if input == dragTouch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging, dragTouch = false, nil
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
     end
 end)
 connect(UserInputService.WindowFocusReleased, function()
-    dragging, dragTouch = false, nil
+    dragging = false
 end)
 
 -- Inicio: perfil, vida, ouro e informacoes locais da sessao.
@@ -369,7 +366,7 @@ connect(UserInputService.InputBegan, function(input, processed)
     if processed or UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.G then
         frame.Visible = not frame.Visible
-        dragging, dragTouch = false, nil
+        dragging = false
     end
 end)
 
@@ -536,11 +533,11 @@ local function numberField(page, name, initial, minimum, maximum, callback)
         if notify then callback(current) end
         preferencesChanged()
     end
-    local sliding, touch
+    local sliding
     local previousScrolling
     local function release()
         if sliding then page.ScrollingEnabled = previousScrolling end
-        sliding, touch = false, nil
+        sliding = false
     end
     local function move(x)
         if bar.AbsoluteSize.X <= 0 then return end
@@ -550,20 +547,19 @@ local function numberField(page, name, initial, minimum, maximum, callback)
         show(math.floor(value / step + 0.5) * step, true)
     end
     hit.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
             if sliding then return end
             previousScrolling = page.ScrollingEnabled
             page.ScrollingEnabled = false
             sliding = true
-            touch = input.UserInputType == Enum.UserInputType.Touch and input or nil
             move(input.Position.X)
         end
     end)
     connect(UserInputService.InputChanged, function(input)
-        if sliding and (input == touch or (not touch and input.UserInputType == Enum.UserInputType.MouseMovement)) then move(input.Position.X) end
+        if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then move(input.Position.X) end
     end)
     connect(UserInputService.InputEnded, function(input)
-        if input == touch or input.UserInputType == Enum.UserInputType.MouseButton1 then release() end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then release() end
     end)
     connect(UserInputService.WindowFocusReleased, release)
     connect(frame:GetPropertyChangedSignal("Visible"), release)
