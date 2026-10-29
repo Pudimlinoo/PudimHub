@@ -78,10 +78,8 @@ local function Button(parent, label, position, size, callback, color)
     Connect(b.Activated, callback)
     return b
 end
-Button(MainFrame, "PARAR TUDO", UDim2.new(0,12,1,-140), UDim2.fromOffset(126,32), function() StopAll() end, Color3.fromRGB(109,42,51))
 local minimize = Button(TopBar, "—", UDim2.new(1,-38,0,17), UDim2.fromOffset(30,30), function() MainFrame.Visible = false end)
-Button(MainFrame, "ENCERRAR", UDim2.new(0,12,1,-100), UDim2.fromOffset(126,32), function() Session.Destroy() end)
-local sidebar=New("ScrollingFrame",MainFrame,{Position=UDim2.fromOffset(12,76),Size=UDim2.new(0,132,1,-228),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=2,ScrollBarImageColor3=Theme.Accent})
+local sidebar=New("ScrollingFrame",MainFrame,{Position=UDim2.fromOffset(12,76),Size=UDim2.new(0,132,1,-136),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=2,ScrollBarImageColor3=Theme.Accent})
 New("UIListLayout",sidebar,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
 local ContentContainer = New("Frame", MainFrame, {Position = UDim2.fromOffset(154,122), Size = UDim2.new(1,-166,1,-180), BackgroundTransparency = 1})
 local footer = New("Frame", MainFrame, {Position = UDim2.new(0,12,1,-48), Size = UDim2.new(1,-24,0,40), BackgroundColor3 = Color3.fromRGB(13,8,11), BorderSizePixel = 0})
@@ -191,6 +189,10 @@ local EspTab = Page("ESP", "Jogadores, distância e vida.")
 local TeleportTab = Page("Teleporte", "Pontos salvos, jogadores e observação.")
 local VisualTab = Page("Visual", "Câmera, iluminação e mira central.")
 local Settings = Page("Ajustes", "Interface, atalhos e restauração.")
+local stopCard = Card(Settings, 48)
+Button(stopCard, "PARAR TUDO", UDim2.fromOffset(10,7), UDim2.new(1,-20,0,34), StopAll, Color3.fromRGB(109,42,51))
+local exitCard = Card(Settings, 48)
+Button(exitCard, "ENCERRAR", UDim2.fromOffset(10,7), UDim2.new(1,-20,0,34), function() Session.Destroy() end)
 local function Info(parent, title, description)
     local card = Card(parent, 100)
     Text(card, title, 13, UDim2.fromOffset(12,8), UDim2.new(1,-24,0,22), Theme.Accent)
@@ -262,6 +264,17 @@ Pages[1].Button.BackgroundColor3 = Color3.fromRGB(95,10,25)
 Pages[1].Button.TextColor3 = Theme.Accent
 Button(ScreenGui, "PUDIM", UDim2.new(0,12,0.5,-20), UDim2.fromOffset(72,40), function()
     MainFrame.Visible = not MainFrame.Visible
+end)
+-- Um clique no mundo recolhe o menu; o M1 original continua com o jogo.
+Connect(UserInputService.InputBegan, function(input, processed)
+    if processed or input.UserInputType ~= Enum.UserInputType.MouseButton1 or not MainFrame.Visible then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    local inset = game:GetService("GuiService"):GetGuiInset()
+    local point = Vector2.new(input.Position.X, input.Position.Y) - inset
+    local origin, size = MainFrame.AbsolutePosition, MainFrame.AbsoluteSize
+    if point.X < origin.X or point.X > origin.X + size.X or point.Y < origin.Y or point.Y > origin.Y + size.Y then
+        MainFrame.Visible = false
+    end
 end)
 -- Painel adaptado à área útil; arraste pelo cabeçalho com mouse.
 TopBar.Active = true
@@ -783,13 +796,12 @@ Connect(UserInputService.InputBegan, function(input, processed)
     if input.KeyCode == Enum.KeyCode.G then SetConfig("Fly", not Configs.Fly)
     elseif input.KeyCode == Enum.KeyCode.H then MainFrame.Visible = not MainFrame.Visible end
 end)
--- Modal libera o cursor em primeira pessoa; a atualização após a câmera
--- mantém o mouse livre caso o controle do jogo reaplique o bloqueio.
+-- O controle nativo da câmera mantém a posse de MouseBehavior.
+-- Não escrever Default a cada frame: isso disputa o mouse com o Grab Line.
 local savedMouse
 Session.RestoreMouse = function()
     minimize.Modal = false
     if savedMouse then
-        UserInputService.MouseBehavior = savedMouse.Behavior
         UserInputService.MouseIconEnabled = savedMouse.Icon
         savedMouse = nil
     end
@@ -800,15 +812,13 @@ local function SyncMouse()
         return
     end
     if not savedMouse then
-        savedMouse = {Behavior=UserInputService.MouseBehavior, Icon=UserInputService.MouseIconEnabled}
+        savedMouse = {Icon=UserInputService.MouseIconEnabled}
     end
     minimize.Modal = true
-    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     UserInputService.MouseIconEnabled = true
 end
 Connect(MainFrame:GetPropertyChangedSignal("Visible"), SyncMouse)
 Connect(ScreenGui:GetPropertyChangedSignal("Enabled"), SyncMouse)
-RunService:BindToRenderStep("PudimHubFTAPCursor", Enum.RenderPriority.Last.Value + 1, SyncMouse)
 SyncMouse()
 local elapsed, frames = 0, 0
 local sessionStart = os.clock()

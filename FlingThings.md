@@ -27,7 +27,9 @@ Todas as funções opcionais começam desligadas. Controles para teclado e mouse
 - **V**: teleporte no cursor, quando ativado; aponte para chão horizontal.
 - **X**: frear movimento e rotação do personagem.
 
-Velocidade/pulo em **0** preservam os valores originais. Parar tudo desliga as funções e restaura colisões, iluminação, FOV e câmera observada. Encerrar também remove o HUD e suas conexões.
+Velocidade/pulo em **0** preservam os valores originais. Na aba **Ajustes**, Parar tudo desliga as funções e restaura colisões, iluminação, FOV e câmera observada. Encerrar também remove o HUD e suas conexões.
+
+O cursor usa o modo modal nativo enquanto o painel está aberto, sem forçar `MouseBehavior` a cada frame. Feche com H ou clique com M1 no mundo, fora do painel, para recolher o HUD. O script não simula nem consome o clique de agarrar.
 
 ## Super força
 
