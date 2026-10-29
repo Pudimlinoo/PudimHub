@@ -38,6 +38,7 @@ local function StopAll()
     Configs.JumpExtra = 0
     if EndFly then EndFly() end
     if RestoreMovement then RestoreMovement() end
+    if Session.StopExtras then Session.StopExtras() end
     for _, refresh in pairs(Refresh) do refresh() end
 end
 local function New(class, parent, props)
@@ -184,6 +185,11 @@ end
 
 local Home = Page("Início", "Fling Things and People • PudimHub")
 local PlayerTab = Page("Player", "Movimento e voo do seu personagem.")
+local ThrowTab = Page("Arremesso", "Força extra no objeto que você está segurando.")
+local AimTab = Page("Mira", "Segure Q com o painel fechado para acompanhar o alvo.")
+local EspTab = Page("ESP", "Jogadores, distância e vida.")
+local TeleportTab = Page("Teleporte", "Pontos salvos, jogadores e observação.")
+local VisualTab = Page("Visual", "Câmera, iluminação e mira central.")
 local Settings = Page("Ajustes", "Interface, atalhos e restauração.")
 local function Info(parent, title, description)
     local card = Card(parent, 100)
@@ -246,6 +252,7 @@ Info(Settings, "ATALHOS", "H abre ou fecha o painel. O botão PUDIM também reab
 local resetCard = Card(Settings, 52)
 Button(resetCard, "RESTAURAR PADRÕES", UDim2.fromOffset(10,9), UDim2.new(1,-20,0,34), function()
     StopAll()
+    if Session.ResetExtras then Session.ResetExtras() end
     SetConfig("FlySpeed", 50)
     SetConfig("UIScale", 100)
 end)
@@ -366,9 +373,396 @@ local function UpdatePlayer()
     flight.Velocity.VectorVelocity = move * Configs.FlySpeed
     flight.Orientation.CFrame = camera.CFrame.Rotation
 end
+-- Recursos opcionais; todas as alterações locais têm restauração em Parar tudo.
+do
+    local Lighting = game:GetService("Lighting")
+    local E = {ESP = {}, Collisions = {}, Slots = {}, Slot = 1, Selected = nil, LastThrow = 0, NoticeUntil = 0}
+    local defaults = {
+        SuperThrow=false, ThrowPower=150, ThrowLift=0, ThrowSpin=0, ThrowMode="Câmera", HeldESP=false,
+        Aim=false, AimFOV=140, AimRange=500, AimSmooth=12, AimPrediction=120, AimPart="Corpo",
+        AimWalls=true, AimTeam=false, AimCircle=false, AimSticky=true,
+        ESP=false, ESPWalls=false, ESPNames=true, ESPHealth=true, ESPRange=1000,
+        Noclip=false, InfiniteJump=false, AntiFling=false, MaxVelocity=180, AntiVoid=false,
+        Fullbright=false, CameraFOV=false, FOV=80, Crosshair=false, Spectate=false, ClickTP=false,
+    }
+    for key,value in pairs(defaults) do Configs[key]=value end
+    local function Action(page, title, callback)
+        local card=Card(page,48)
+        return Button(card,title,UDim2.fromOffset(10,7),UDim2.new(1,-20,0,34),callback)
+    end
+    local function Choice(page,title,key,values)
+        local button=Action(page,"",function()
+            local index=table.find(values,Configs[key]) or 0
+            SetConfig(key,values[index % #values+1])
+        end)
+        Refresh[key]=function() button.Text=title .. ": " .. tostring(Configs[key]) end
+        Refresh[key]()
+    end
+    local function Notice(message)
+        E.NoticeUntil=os.clock()+4
+        status.Text=message
+    end
+    local function Root()
+        return Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    end
+    local function CharacterRoot(other)
+        local character=other and other.Character
+        local h=character and character:FindFirstChildWhichIsA("Humanoid")
+        if not h or h.Health<=0 then return nil,nil end
+        return character:FindFirstChild("HumanoidRootPart"),h
+    end
+    local function Playing()
+        return not MainFrame.Visible and not UserInputService:GetFocusedTextBox()
+    end
+    local function Params(extras)
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        local ignore={}
+        if Player.Character then table.insert(ignore,Player.Character) end
+        if E.Grab and E.Grab.Model.Parent then table.insert(ignore,E.Grab.Model) end
+        for _,object in ipairs(extras or {}) do table.insert(ignore,object) end
+        params.FilterDescendantsInstances=ignore
+        return params
+    end
+    Toggle(ThrowTab,"Super força","Adiciona impulso ao arremessar com o botão direito.","SuperThrow")
+    Slider(ThrowTab,"Impulso extra (studs/s)","ThrowPower",0,1000)
+    Slider(ThrowTab,"Elevação extra (studs/s)","ThrowLift",0,200)
+    Slider(ThrowTab,"Giro extra (rad/s)","ThrowSpin",0,100)
+    Choice(ThrowTab,"Direção","ThrowMode",{"Câmera","Para cima","Para baixo"})
+    Toggle(ThrowTab,"Destacar objeto segurado","Contorno do objeto reconhecido pelo seu clique.","HeldESP")
+    local grabInfo=Info(ThrowTab,"OBJETO SEGURADO","Pegue um objeto com o painel fechado.")
+    Info(ThrowTab,"COMO USAR","Ative, feche com H, pegue com clique esquerdo e arremesse com direito. Soltar com esquerdo não aplica força. O servidor pode corrigir o impulso.")
+    Toggle(AimTab,"Aimbot / mira assistida","Segure Q; não usa o botão de arremesso.","Aim")
+    Choice(AimTab,"Alvo","AimPart",{"Corpo","Cabeça"})
+    Slider(AimTab,"Raio da mira (pixels)","AimFOV",30,400)
+    Slider(AimTab,"Alcance (studs)","AimRange",25,2000)
+    Slider(AimTab,"Resposta da mira","AimSmooth",1,30)
+    Slider(AimTab,"Antecipação (ms)","AimPrediction",0,500)
+    Toggle(AimTab,"Checar paredes","Prioriza alvos sem obstáculos na linha de visão.","AimWalls")
+    Toggle(AimTab,"Ignorar mesmo time","Jogadores sem time continuam elegíveis.","AimTeam")
+    Toggle(AimTab,"Manter alvo","Mantém o alvo enquanto estiver válido no círculo.","AimSticky")
+    Toggle(AimTab,"Mostrar círculo","Mostra o raio quando o painel está fechado.","AimCircle")
+    local aimInfo=Info(AimTab,"ALVO ATUAL","Nenhum • segure Q para mirar.")
+    Toggle(EspTab,"ESP de jogadores","Contorno e informações; limite de 25 jogadores.","ESP")
+    Toggle(EspTab,"Ver através de paredes","Afeta contornos e etiquetas.","ESPWalls")
+    Toggle(EspTab,"Mostrar nomes","Exibe nome e distância.","ESPNames")
+    Toggle(EspTab,"Mostrar vida","Exibe vida atual e máxima.","ESPHealth")
+    Slider(EspTab,"Distância do ESP","ESPRange",50,3000)
+    Toggle(PlayerTab,"Noclip","Desativa colisões do seu personagem; restaura ao desligar.","Noclip")
+    Toggle(PlayerTab,"Pulo no ar","Permite outro pulo ao pressionar Espaço.","InfiniteJump")
+    Toggle(PlayerTab,"Reduzir flings","Limita velocidades extremas do seu personagem.","AntiFling")
+    Slider(PlayerTab,"Limite anti-fling","MaxVelocity",60,500)
+    Toggle(PlayerTab,"Resgate de queda","Volta ao último chão firme perto do limite do mapa.","AntiVoid")
+    Action(PlayerTab,"Frear personagem (X)",function()
+        local root=Root()
+        if root then root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end
+    end)
+    Action(TeleportTab,"Alternar ponto salvo",function() E.Slot=E.Slot%3+1 end)
+    local slotInfo=Info(TeleportTab,"PONTOS SALVOS","Ponto 1: vazio • válidos apenas nesta sessão.")
+    Action(TeleportTab,"Salvar posição neste ponto",function()
+        local root=Root()
+        if not root then Notice("Aguarde seu personagem"); return end
+        E.Slots[E.Slot]=root.CFrame
+        Notice("Ponto " .. E.Slot .. " salvo")
+    end)
+    local function Teleport(cf)
+        local root,h=CharacterRoot(Player)
+        if not root or root.Anchored or h.SeatPart then Notice("Personagem indisponível ou sentado"); return end
+        SetConfig("Fly",false); EndFly()
+        root.CFrame=cf
+        root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
+        Notice("Posição alterada; o servidor pode corrigir o movimento")
+    end
+    Action(TeleportTab,"Ir ao ponto salvo",function()
+        local cf=E.Slots[E.Slot]
+        if cf then Teleport(cf) else Notice("Salve uma posição primeiro") end
+    end)
+    Action(TeleportTab,"Apagar ponto selecionado",function() E.Slots[E.Slot]=nil end)
+    local playerButton
+    playerButton=Action(TeleportTab,"Selecionar jogador: nenhum",function()
+        local list={}
+        for _,other in ipairs(Players:GetPlayers()) do if other~=Player then table.insert(list,other) end end
+        table.sort(list,function(a,b) return a.Name<b.Name end)
+        E.Selected=#list>0 and list[((table.find(list,E.Selected) or 0)%#list)+1] or nil
+    end)
+    Action(TeleportTab,"Ir perto do jogador selecionado",function()
+        local root=CharacterRoot(E.Selected)
+        if root then Teleport(root.CFrame*CFrame.new(0,3,6)) else Notice("Selecione um jogador vivo") end
+    end)
+    Toggle(TeleportTab,"Observar jogador","Usa a câmera do alvo selecionado; restaura ao desligar.","Spectate")
+    Toggle(TeleportTab,"Teleporte no cursor (V)","Feche o painel e aponte para o chão; pressione V.","ClickTP")
+    Toggle(VisualTab,"Mira central","Pequena cruz no centro da tela.","Crosshair")
+    Toggle(VisualTab,"Iluminação clara","Ajusta iluminação local; restaura ao desligar.","Fullbright")
+    Toggle(VisualTab,"Alterar campo de visão","Aplica o FOV escolhido à câmera.","CameraFOV")
+    Slider(VisualTab,"Campo de visão","FOV",40,110)
+    Info(Settings,"NOVOS ATALHOS","Q segurado: mira assistida\nV: teleporte no cursor quando ativado\nX: frear • H: painel • G: voo")
+    local overlay=New("ScreenGui",Player.PlayerGui,{Name="PudimFTAPOverlay",IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=49})
+    local circle=Round(New("Frame",overlay,{AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,Visible=false}),1000)
+    New("UIStroke",circle,{Color=Theme.Accent,Thickness=1,Transparency=0.2})
+    local cross=New("Frame",overlay,{AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(16,16),BackgroundTransparency=1,Visible=false})
+    New("Frame",cross,{Position=UDim2.fromOffset(7,0),Size=UDim2.fromOffset(2,16),BackgroundColor3=Theme.Text,BorderSizePixel=0})
+    New("Frame",cross,{Position=UDim2.fromOffset(0,7),Size=UDim2.fromOffset(16,2),BackgroundColor3=Theme.Text,BorderSizePixel=0})
+    local heldHighlight=New("Highlight",overlay,{Enabled=false,FillTransparency=0.8,OutlineColor=Theme.Accent})
+    local mouse=Player:GetMouse()
+    -- Estrutura observada em fontes públicas; valida o vínculo em vez de enviar remotes.
+    -- https://github.com/FACEME-txt/SolaraSCRIPTS (STRENGTH Script)
+    local function GrabCandidate(model)
+        if model.Name~="GrabParts" or not E.PendingGrab or os.clock()-E.PendingGrab.At>1 then return end
+        local part=model:FindFirstChild("GrabPart")
+        local weld=part and part:FindFirstChildWhichIsA("WeldConstraint")
+        local target=weld and weld.Part1
+        local clicked=E.PendingGrab.Part
+        if not target or not target:IsA("BasePart") or not clicked or not clicked.Parent then return end
+        if target.AssemblyRootPart~=clicked.AssemblyRootPart or target.Anchored then return end
+        if Player.Character and target:IsDescendantOf(Player.Character) then return end
+        E.Grab={Model=model,Part=target,ClickAt=E.PendingGrab.At}
+        E.PendingGrab=nil
+    end
+    local function Throw(grab)
+        if not Configs.SuperThrow or not E.ThrowIntent or E.ThrowIntent.Grab~=grab or os.clock()-E.ThrowIntent.At>0.4 then return end
+        if os.clock()-E.LastThrow<0.2 then return end
+        E.ThrowIntent=nil
+        local part=grab.Part
+        if not part or not part.Parent or part.Anchored then return end
+        local root=part.AssemblyRootPart or part
+        if root.Anchored then return end
+        local impulse=E.ThrowDirection*Configs.ThrowPower+Vector3.yAxis*Configs.ThrowLift
+        local ok,err=pcall(function()
+            root:ApplyImpulse(impulse*root.AssemblyMass)
+            if Configs.ThrowSpin>0 then root.AssemblyAngularVelocity=root.AssemblyAngularVelocity+Vector3.yAxis*Configs.ThrowSpin end
+        end)
+        E.LastThrow=os.clock()
+        Notice(ok and "Impulso aplicado localmente" or "Falha no arremesso: " .. tostring(err))
+    end
+    local function AimPoint(other)
+        local root,h=CharacterRoot(other)
+        if not root then return end
+        if Configs.AimTeam and Player.Team and other.Team==Player.Team then return end
+        local part=Configs.AimPart=="Cabeça" and other.Character:FindFirstChild("Head") or root
+        if not part then return end
+        local camera=Workspace.CurrentCamera
+        local ownRoot=Root()
+        if not camera or not ownRoot or (part.Position-ownRoot.Position).Magnitude>Configs.AimRange then return end
+        local screen,onScreen=camera:WorldToViewportPoint(part.Position)
+        if not onScreen or screen.Z<=0 then return end
+        local distance=(Vector2.new(screen.X,screen.Y)-camera.ViewportSize/2).Magnitude
+        if distance>Configs.AimFOV then return end
+        if Configs.AimWalls then
+            local result=Workspace:Raycast(camera.CFrame.Position,part.Position-camera.CFrame.Position,Params())
+            if result and not result.Instance:IsDescendantOf(other.Character) then return end
+        end
+        return part.Position+part.AssemblyLinearVelocity*(Configs.AimPrediction/1000),distance
+    end
+    local function PickAim()
+        if Configs.AimSticky and E.AimTarget and E.AimTarget.Parent then
+            local point=AimPoint(E.AimTarget)
+            if point then return E.AimTarget,point end
+        end
+        local chosen,point,best=nil,nil,math.huge
+        for _,other in ipairs(Players:GetPlayers()) do
+            if other~=Player then
+                local p,d=AimPoint(other)
+                if p and d<best then chosen,point,best=other,p,d end
+            end
+        end
+        return chosen,point
+    end
+    local function ClearESP()
+        for other,item in pairs(E.ESP) do item.Highlight:Destroy(); item.Billboard:Destroy(); E.ESP[other]=nil end
+    end
+    local function UpdateESP()
+        local origin=Root()
+        local visible={}
+        local sorted={}
+        if Configs.ESP and origin then
+            for _,other in ipairs(Players:GetPlayers()) do
+                local root,h=CharacterRoot(other)
+                if other~=Player and root then
+                    local distance=(root.Position-origin.Position).Magnitude
+                    if distance<=Configs.ESPRange then table.insert(sorted,{Player=other,Root=root,H=h,Distance=distance}) end
+                end
+            end
+        end
+        table.sort(sorted,function(a,b) return a.Distance<b.Distance end)
+        for index=1,math.min(#sorted,25) do
+            local row=sorted[index]; local other=row.Player
+            visible[other]=true
+            local item=E.ESP[other]
+            if not item then
+                local hl=New("Highlight",overlay,{FillTransparency=0.9})
+                local bill=New("BillboardGui",overlay,{Size=UDim2.fromOffset(180,46),StudsOffsetWorldSpace=Vector3.new(0,3,0)})
+                local label=Text(bill,"",12,nil,UDim2.fromScale(1,1)); label.TextXAlignment=Enum.TextXAlignment.Center
+                label.TextStrokeTransparency=0.3; label.TextWrapped=true
+                item={Highlight=hl,Billboard=bill,Label=label}; E.ESP[other]=item
+            end
+            local color=other.Team and other.Team.TeamColor.Color or Theme.Accent
+            item.Highlight.Adornee=other.Character
+            item.Highlight.FillColor=color; item.Highlight.OutlineColor=color
+            item.Highlight.DepthMode=Configs.ESPWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+            item.Billboard.Adornee=row.Root; item.Billboard.AlwaysOnTop=Configs.ESPWalls
+            item.Billboard.MaxDistance=Configs.ESPRange
+            item.Label.Text=(Configs.ESPNames and string.format("%s • %d studs",other.DisplayName,row.Distance) or "")
+                .. (Configs.ESPHealth and string.format("\n%.0f / %.0f HP",row.H.Health,row.H.MaxHealth) or "")
+        end
+        for other,item in pairs(E.ESP) do
+            if not visible[other] then item.Highlight:Destroy(); item.Billboard:Destroy(); E.ESP[other]=nil end
+        end
+    end
+    local function RestoreCollisions()
+        for part,canCollide in pairs(E.Collisions) do if part.Parent then part.CanCollide=canCollide end end
+        table.clear(E.Collisions)
+    end
+    local function RestoreView()
+        if E.Light then for key,value in pairs(E.Light) do Lighting[key]=value end; E.Light=nil end
+        if E.Camera then
+            if E.Camera.Object.Parent then E.Camera.Object.FieldOfView=E.Camera.FOV end
+            E.Camera=nil
+        end
+        if E.Spectator then
+            local camera=E.Spectator.Camera
+            local subject=E.Spectator.Subject
+            if camera.Parent then camera.CameraSubject=(subject and subject.Parent and subject) or Humanoid() end
+            E.Spectator=nil
+        end
+    end
+    Session.StopExtras=function()
+        for key,value in pairs(defaults) do if type(value)=="boolean" then Configs[key]=false end end
+        E.AimTarget=nil; E.Grab=nil; E.PendingGrab=nil; E.ThrowIntent=nil
+        RestoreCollisions(); RestoreView(); ClearESP()
+        circle.Visible=false; cross.Visible=false; heldHighlight.Enabled=false
+        for _,refresh in pairs(Refresh) do refresh() end
+        if not Session.Alive then
+            RunService:UnbindFromRenderStep("PudimFTAPAim")
+            overlay:Destroy()
+        end
+    end
+    Session.ResetExtras=function()
+        for key,value in pairs(defaults) do Configs[key]=value end
+        for _,refresh in pairs(Refresh) do refresh() end
+    end
+    Connect(Player.CharacterRemoving,function()
+        RestoreCollisions(); E.Safe=nil; E.Grab=nil; E.PendingGrab=nil; E.ThrowIntent=nil
+    end)
+    Connect(UserInputService.InputBegan,function(input,processed)
+        if processed or not Playing() then return end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 then
+            E.ThrowIntent=nil
+            if E.Grab then E.PendingGrab=nil else E.PendingGrab={Part=mouse.Target,At=os.clock()} end
+        elseif input.UserInputType==Enum.UserInputType.MouseButton2 then
+            if E.Grab then
+                local camera=Workspace.CurrentCamera
+                if camera then
+                    E.ThrowDirection=Configs.ThrowMode=="Para cima" and Vector3.yAxis or Configs.ThrowMode=="Para baixo" and -Vector3.yAxis or camera.CFrame.LookVector
+                    E.ThrowIntent={Grab=E.Grab,At=os.clock()}
+                end
+            end
+        elseif input.KeyCode==Enum.KeyCode.X then
+            local root=Root()
+            if root then root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end
+        elseif input.KeyCode==Enum.KeyCode.Space and Configs.InfiniteJump and not Configs.Fly then
+            local h=Humanoid()
+            if h and h.Health>0 and not h.SeatPart then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+        elseif input.KeyCode==Enum.KeyCode.V and Configs.ClickTP then
+            local camera=Workspace.CurrentCamera
+            if camera then
+                local location=UserInputService:GetMouseLocation()
+                local ray=camera:ViewportPointToRay(location.X,location.Y)
+                local hit=Workspace:Raycast(ray.Origin,ray.Direction*1000,Params())
+                if hit and hit.Normal.Y>0.5 then Teleport(CFrame.new(hit.Position+Vector3.new(0,4,0)))
+                else Notice("Aponte para uma superfície horizontal") end
+            end
+        end
+    end)
+    Connect(RunService.Stepped,function()
+        if Configs.Noclip and Player.Character then
+            for _,part in ipairs(Player.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    if E.Collisions[part]==nil then E.Collisions[part]=part.CanCollide end
+                    part.CanCollide=false
+                end
+            end
+        elseif next(E.Collisions) then RestoreCollisions() end
+    end)
+    RunService:BindToRenderStep("PudimFTAPAim",Enum.RenderPriority.Camera.Value+1,function(dt)
+        if not Session.Alive then return end
+        local camera=Workspace.CurrentCamera
+        if not camera then return end
+        circle.Position=UDim2.fromOffset(camera.ViewportSize.X/2,camera.ViewportSize.Y/2)
+        circle.Size=UDim2.fromOffset(Configs.AimFOV*2,Configs.AimFOV*2)
+        circle.Visible=Configs.Aim and Configs.AimCircle and Playing() and ScreenGui.Enabled
+        cross.Position=circle.Position; cross.Visible=Configs.Crosshair and Playing() and ScreenGui.Enabled
+        if Configs.Aim and not Configs.Spectate and Playing() and UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+            local point
+            E.AimTarget,point=PickAim()
+            if point and (point-camera.CFrame.Position).Magnitude>0.1 then
+                camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(camera.CFrame.Position,point),1-math.exp(-Configs.AimSmooth*dt))
+            end
+        else E.AimTarget=nil end
+    end)
+    local tick=0
+    Connect(RunService.Heartbeat,function(dt)
+        local root,h=CharacterRoot(Player)
+        if root then
+            if Configs.AntiFling and not Configs.Fly and root.AssemblyLinearVelocity.Magnitude>Configs.MaxVelocity then
+                root.AssemblyLinearVelocity=root.AssemblyLinearVelocity.Unit*Configs.MaxVelocity
+                root.AssemblyAngularVelocity=Vector3.zero
+            end
+            if Configs.AntiVoid and not Configs.Fly and not h.SeatPart then
+                local floor=Workspace:Raycast(root.Position,Vector3.new(0,-6,0),Params())
+                if floor and floor.Normal.Y>0.6 and floor.Instance:IsA("BasePart") and floor.Instance.Anchored then E.Safe=root.CFrame end
+                if E.Safe and root.Position.Y<Workspace.FallenPartsDestroyHeight+35 then Teleport(E.Safe); E.Safe=nil end
+            end
+        end
+        if E.PendingGrab and os.clock()-E.PendingGrab.At<=1 then
+            for _,model in ipairs(Workspace:GetChildren()) do GrabCandidate(model) end
+        elseif E.PendingGrab then E.PendingGrab=nil end
+        if E.Grab and not E.Grab.Model:IsDescendantOf(Workspace) then
+            Throw(E.Grab); E.Grab=nil
+        end
+        if E.Grab and not E.Grab.Part.Parent then E.Grab=nil end
+        heldHighlight.Enabled=Configs.HeldESP and E.Grab~=nil
+        heldHighlight.Adornee=E.Grab and E.Grab.Part or nil
+        tick=tick+dt
+        if tick<0.2 then return end
+        tick=0
+        UpdateESP()
+        aimInfo.Text=E.AimTarget and (E.AimTarget.DisplayName .. " (@" .. E.AimTarget.Name .. ")") or "Nenhum • segure Q com o painel fechado."
+        grabInfo.Text=E.Grab and (E.Grab.Part.Name .. " • vínculo reconhecido") or "Nenhum vínculo reconhecido • pegue um objeto com clique esquerdo."
+        slotInfo.Text="Ponto " .. E.Slot .. ": " .. (E.Slots[E.Slot] and "salvo" or "vazio") .. " • 3 pontos por sessão."
+        if E.Selected and not E.Selected.Parent then E.Selected=nil; SetConfig("Spectate",false) end
+        playerButton.Text="Jogador: " .. (E.Selected and (E.Selected.DisplayName .. " (@" .. E.Selected.Name .. ")") or "nenhum")
+        local camera=Workspace.CurrentCamera
+        if E.Camera and (not Configs.CameraFOV or E.Camera.Object~=camera) then
+            if E.Camera.Object.Parent then E.Camera.Object.FieldOfView=E.Camera.FOV end
+            E.Camera=nil
+        end
+        if Configs.CameraFOV and camera then
+            E.Camera=E.Camera or {Object=camera,FOV=camera.FieldOfView}
+            camera.FieldOfView=Configs.FOV
+        end
+        if Configs.Fullbright then
+            E.Light=E.Light or {Brightness=Lighting.Brightness,ClockTime=Lighting.ClockTime,Ambient=Lighting.Ambient,GlobalShadows=Lighting.GlobalShadows}
+            Lighting.Brightness=2; Lighting.ClockTime=14; Lighting.Ambient=Color3.fromRGB(180,180,180); Lighting.GlobalShadows=false
+        elseif E.Light then for key,value in pairs(E.Light) do Lighting[key]=value end; E.Light=nil end
+        local _,targetHumanoid=CharacterRoot(E.Selected)
+        if E.Spectator and (not Configs.Spectate or not targetHumanoid or camera~=E.Spectator.Camera) then
+            local old=E.Spectator
+            if old.Camera.Parent then old.Camera.CameraSubject=(old.Subject and old.Subject.Parent and old.Subject) or Humanoid() end
+            E.Spectator=nil
+        end
+        if Configs.Spectate and targetHumanoid and camera then
+            E.Spectator=E.Spectator or {Camera=camera,Subject=camera.CameraSubject}
+            camera.CameraSubject=targetHumanoid
+        end
+    end)
+    -- O rodapé principal consulta este prazo para não apagar mensagens imediatamente.
+    Session.ExtraStatusUntil=function() return E.NoticeUntil end
+end
+
 Session.Destroy = function()
     if not Session.Alive then return end
     Session.Alive = false
+    if Session.StopExtras then Session.StopExtras() end
     RunService:UnbindFromRenderStep("PudimHubFTAPCursor")
     if Session.RestoreMouse then Session.RestoreMouse() end
     EndFly()
@@ -434,7 +828,9 @@ Connect(RunService.Heartbeat, function(dt)
     profile.Text = Player.DisplayName .. "  (@" .. Player.Name .. ")\n" .. (Player.Team and Player.Team.Name or "Sem time")
     local seconds = math.floor(os.clock()-sessionStart)
     substatus.Text = string.format("%d FPS / %d jogadores / %02d:%02d nesta sessão / H: menu", fps, #Players:GetPlayers(), math.floor(seconds/60), seconds%60)
-    status.Text = flight and "Voo ativo" or (Configs.Fly and "Voo aguardando personagem livre" or "Pronto")
+    if not Session.ExtraStatusUntil or os.clock() >= Session.ExtraStatusUntil() then
+        status.Text = flight and "Voo ativo" or (Configs.Fly and "Voo aguardando personagem livre" or "Pronto")
+    end
     if h then
         movementInfo.Text = string.format("Velocidade: %.1f • %s: %.1f\nFling Things and People", h.WalkSpeed,
             h.UseJumpPower and "Força do pulo" or "Altura do pulo", h.UseJumpPower and h.JumpPower or h.JumpHeight)
