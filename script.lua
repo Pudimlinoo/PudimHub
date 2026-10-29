@@ -5,6 +5,7 @@ local base = "https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/"
 local scripts = {
     [994732206] = "bloxfruits.lua",
     [210851291] = "buildaboat.Lua",
+    [2668101271] = "FlingThings.lua",
 }
 
 -- Resolve o universo pelo PlaceId oficial: funciona também nos outros mundos.
