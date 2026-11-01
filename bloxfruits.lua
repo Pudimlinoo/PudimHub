@@ -5827,8 +5827,16 @@ end)()
     criarSecao("BAU FARM", 0, page)
     local status = text("Parado.")
     local metrics = text("Saldo da sessao: -- | Beli/min: --", 54)
-    local startButton, stopButton
+    local chestToggle
+    local syncingChestToggle=false
+    local function syncChestToggle(value)
+        if not chestToggle or chestToggle.get()==value then return end
+        syncingChestToggle=true
+        chestToggle.set(value,true)
+        syncingChestToggle=false
+    end
     function HUD.stopChest(reason)
+        syncChestToggle(false)
         local active = session
         if not active then return end
         active.cancelled = true
@@ -5836,9 +5844,16 @@ end)()
         if active.stop then active.stop() end
         if HUD.alive then status.Text = "Parando e restaurando movimento..." end
     end
-    startButton = button("Iniciar Bau Farm", function()
-        if session or not HUD.alive then return end
+    criarBotaoToggle("Bau Farm",0,page,function(value)
+        if syncingChestToggle then return end
+        if not value then HUD.stopChest(); return end
+        if not HUD.alive then syncChestToggle(false); return end
+        if session then
+            syncChestToggle(not session.cancelled)
+            return
+        end
         if HUD.travelActive or HUD.flying or HUD.safeActive or HUD.seaBusy or HUD.serverBusy then
+            syncChestToggle(false)
             status.Text = "Finalize o voo, viagem ou Auto Safe antes de iniciar."
             return
         end
@@ -5847,7 +5862,6 @@ end)()
         session = active
         HUD.chestBusy = true
         HUD.stopFarmAction()
-        startButton.Text = "Bau Farm em execucao"
         status.Text = "Preparando locais de baus..."
         -- Independent worker: destroying the hub requests cooperative cleanup.
         task.defer(function()
@@ -5862,7 +5876,7 @@ end)()
                 session = nil
                 HUD.chestBusy = false
                 if HUD.alive then
-                    startButton.Text = "Iniciar Bau Farm"
+                    syncChestToggle(false)
                     local failure = not ok and tostring(err) or active.error
                     status.Text = failure and "Erro no farm; veja a aba Sistema." or active.reason or "Farm finalizado."
                     if failure then HUD.report("Bau Farm", failure) end
@@ -5870,7 +5884,7 @@ end)()
             end
         end)
     end)
-    stopButton = button("Parar Bau Farm", function() HUD.stopChest() end)
+    chestToggle=HUD.toggles[#HUD.toggles]
     criarSlider("Velocidade Bau (studs/s)", 50, 350, 255, 0, page, function(value)
         settings.speed = value
         if session then session.speed = value end
