@@ -128,7 +128,11 @@ function HUD.connect(signal, callback)
     local connection = signal:Connect(function(...)
         if HUD.alive then
             local ok,err=pcall(callback,...)
-            if not ok then HUD.report("Evento",err) end
+            if not ok then
+                if HUD.stopFarmAction then pcall(HUD.stopFarmAction) end
+                HUD.farmPaused=true
+                HUD.report("Evento",err)
+            end
         end
     end)
     table.insert(HUD.connections, connection)
@@ -143,43 +147,18 @@ HUD.travelSpeed = 250
 HUD.farmPaused = false
 HUD.farmRadius = 800
 HUD.farmFilter = ""
-HUD.autoEquip = false
 HUD.farmSearchAt = 0
 HUD.farmAttackAt = 0
-HUD.attackHz = 10
+HUD.attackHz = 5
 HUD.attackReach = 4
 HUD.autoNear = false
 HUD.manualFarmHeight = false
-HUD.localHitbox = false
-HUD.hitboxWidth = 8
-HUD.hitboxPart = nil
-HUD.hitboxOriginal = nil
-function HUD.restoreHitbox()
-    local part, saved = HUD.hitboxPart, HUD.hitboxOriginal
-    HUD.hitboxPart, HUD.hitboxOriginal = nil, nil
-    if part and part.Parent and saved then
-        part.Size = saved.size
-        part.CanCollide = saved.collide
-    end
-end
-function HUD.applyHitbox(npc)
-    local part = npc and npc:FindFirstChild("HumanoidRootPart")
-    if not HUD.localHitbox or not part then HUD.restoreHitbox(); return end
-    if HUD.hitboxPart ~= part then
-        HUD.restoreHitbox()
-        HUD.hitboxPart = part
-        HUD.hitboxOriginal = {size=part.Size,collide=part.CanCollide}
-    end
-    local size = HUD.hitboxOriginal.size
-    part.Size = Vector3.new(math.max(size.X,HUD.hitboxWidth),size.Y,math.max(size.Z,HUD.hitboxWidth))
-    part.CanCollide = false
-end
--- Distância à superfície das partes do corpo, sem usar acessórios como hitbox.
+-- Distancia ao corpo original do NPC; acessorios nao contam.
 function HUD.bodyDistance(npc, position)
     local nearest = math.huge
     for _, part in ipairs(npc:GetChildren()) do
         if part:IsA("BasePart") then
-            local size = (part == HUD.hitboxPart and HUD.hitboxOriginal) and HUD.hitboxOriginal.size or part.Size
+            local size = part.Size
             local half = size * 0.5
             local localPoint = part.CFrame:PointToObjectSpace(position)
             local outside = Vector3.new(math.max(0,math.abs(localPoint.X)-half.X),math.max(0,math.abs(localPoint.Y)-half.Y),math.max(0,math.abs(localPoint.Z)-half.Z))
@@ -189,10 +168,9 @@ function HUD.bodyDistance(npc, position)
     return nearest
 end
 function HUD.isCombatTool(tool)
-    return tool and tool:IsA("Tool") and (tool.ToolTip == "Melee" or tool.ToolTip == "Sword")
+    return tool and tool:IsA("Tool") and tool.ToolTip:lower() == "melee"
 end
 -- Compartilhado pelo farm e ataque proximo; sem inferir autoria do dano.
-HUD.weaponName=""
 HUD.aimFilter=""
 HUD.aimPriority="Tela"
 HUD.farmIgnored=setmetatable({}, {__mode="k"})
@@ -203,14 +181,21 @@ HUD.moveAt=0
 function HUD.pickWeapon(char,hum,now)
     local equipped=char:FindFirstChildOfClass("Tool")
     local function matches(tool)
-        return HUD.isCombatTool(tool) and (HUD.weaponName=="" or tool.Name==HUD.weaponName)
+        return HUD.isCombatTool(tool)
     end
     if matches(equipped) then return equipped end
-    if not HUD.autoEquip or now<(HUD.equipAt or 0) then return nil end
+    if now<(HUD.equipAt or 0) then return nil end
     HUD.equipAt=now+1
     local backpack=player:FindFirstChildOfClass("Backpack")
     if backpack then
-        for _,tool in ipairs(backpack:GetChildren()) do
+        local tools=backpack:GetChildren()
+        table.sort(tools,function(a,b)
+            local pa=a:IsA("Tool") and a.ToolTip=="Melee" and 0 or 1
+            local pb=b:IsA("Tool") and b.ToolTip=="Melee" and 0 or 1
+            if pa~=pb then return pa<pb end
+            return a.Name<b.Name
+        end)
+        for _,tool in ipairs(tools) do
             if matches(tool) then
                 hum:EquipTool(tool)
                 if tool.Parent==char then return tool end
@@ -225,16 +210,19 @@ function HUD.observeProgress(npc,now)
     if not hum then HUD.progress=nil; return false end
     local state=HUD.progress
     if not state or state.target~=npc then
+        HUD.attackBackend="Input"
         HUD.progress={target=npc,health=hum.Health,at=now,retries=0,lastTry=0}
         return false
     end
     if hum.Health<state.health then state.at=now; state.retries=0 end
     state.health=hum.Health
     if now-state.lastTry>1.5 then state.at=now; return false end
-    if now-state.at<8 then return false end
+    if now-state.at<6 then return false end
     state.at=now
     state.retries=state.retries+1
-    if state.retries==1 then
+    if state.retries<=2 then
+        HUD.releaseAttack()
+        HUD.attackBackend="Input"
         HUD.moveAt=0
         return "Reposicionando: vida do alvo sem reducao observada."
     end
@@ -243,6 +231,8 @@ function HUD.observeProgress(npc,now)
     return "Alvo sem progresso; ignorado por 15 segundos."
 end
 function HUD.resetCombatExtras()
+    if HUD.stopFarmAction then HUD.stopFarmAction() end
+    HUD.approach=nil
     HUD.progress=nil; HUD.nearTarget=nil; HUD.moveAt=0; HUD.nearSearchAt=0
     table.clear(HUD.farmIgnored)
 end
@@ -251,32 +241,200 @@ function HUD.validFarmTarget(npc,root,now,radius)
     if not npc or not enemies or npc.Parent~=enemies then return false end
     local hum=npc:FindFirstChildOfClass("Humanoid")
     local part=npc:FindFirstChild("HumanoidRootPart")
-    return hum and part and part:IsA("BasePart") and hum.Health>0
+    return npc:IsA("Model") and not Players:GetPlayerFromCharacter(npc)
+        and not npc:FindFirstChildOfClass("ForceField")
+        and hum and part and part:IsA("BasePart") and hum.Health>0
         and (HUD.farmIgnored[npc] or 0)<=now
         and (part.Position-root.Position).Magnitude<=radius
         and (HUD.farmFilter=="" or npc.Name:lower():find(HUD.farmFilter,1,true)~=nil)
 end
 
-function HUD.tryAttack(npc, tool, root, now, fast)
-    if not HUD.isCombatTool(tool) then return "Equipe uma ferramenta Melee ou Sword." end
-    local targetHum = npc and npc:FindFirstChildOfClass("Humanoid")
-    if not targetHum or targetHum.Health <= 0 then return "Alvo indisponível." end
-    if UserInputService:GetFocusedTextBox() then return "Ataque pausado enquanto você digita." end
-    local distance = HUD.bodyDistance(npc,root.Position)
-    if distance > HUD.attackReach then return string.format("Fora da distância de ataque / %.1f studs",distance) end
-    if not tool.Enabled then return "Aguardando a ferramenta ficar disponível." end
-    if now < HUD.farmAttackAt then return "Alvo em alcance / aguardando próximo ataque." end
-    HUD.farmAttackAt = now + (fast and 1 / HUD.attackHz or 0.3)
-    local ok = pcall(function() tool:Activate() end)
-    if not ok then return "A ferramenta não aceitou a ativação." end
-    if HUD.progress and HUD.progress.target==npc then HUD.progress.lastTry=now end
-    task.delay(0.025,function()
-        if HUD.alive and tool.Parent == player.Character and tool.Enabled then
-            pcall(function() tool:Deactivate() end)
+-- Autoclick com alcance validado e movimento continuo do farm NPC.
+do
+    local held, motion
+    local vim
+    pcall(function() vim=game:GetService("VirtualInputManager") end)
+    HUD.farmSpeed=350
+    HUD.attackAttempts=0
+    HUD.attackBackend="Input"
+    HUD.attackNote=""
+    function HUD.releaseAttack()
+        local pulse=held
+        held=nil
+        if not pulse then return end
+        if pulse.method=="Input" then
+            pcall(function() vim:SendMouseButtonEvent(pulse.position.X,pulse.position.Y,0,false,game,0) end)
+        elseif pulse.method=="VirtualUser" then
+            pcall(function() VirtualUser:Button1Up(pulse.position,pulse.camera) end)
         end
+        if pulse.tool.Parent then pcall(function() pulse.tool:Deactivate() end) end
+    end
+    function HUD.stopFarmMotion()
+        HUD.farmMotion=false
+        if not motion then return end
+        local old=motion
+        motion=nil
+        old.drive:Destroy(); old.attachment:Destroy()
+        old.marker:Destroy()
+        if old.root.Parent then
+            old.root.AssemblyLinearVelocity=Vector3.zero
+            old.root.AssemblyAngularVelocity=Vector3.zero
+        end
+        if old.hum.Parent then
+            old.hum.AutoRotate=old.rotate
+            old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated)
+        end
+        if not HUD.manualNoclip then
+            for part,original in pairs(HUD.collisions) do
+                if part.Parent then part.CanCollide=original end
+                HUD.collisions[part]=nil
+            end
+        end
+    end
+    function HUD.stopFarmAction()
+        HUD.releaseAttack()
+        HUD.stopFarmMotion()
+    end
+    function HUD.driveFarm(char,root,hum,point,face)
+        if motion and motion.root~=root then HUD.stopFarmMotion() end
+        if not motion then
+            local attachment=Instance.new("Attachment")
+            attachment.Name="PudimFarmAttachment"
+            attachment.Parent=root
+            local drive=Instance.new("LinearVelocity")
+            drive.Name="PudimFarmVelocity"
+            drive.Attachment0=attachment
+            drive.RelativeTo=Enum.ActuatorRelativeTo.World
+            drive.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector
+            drive.ForceLimitsEnabled=false
+            drive.VectorVelocity=Vector3.zero
+            drive.Parent=root
+            local marker=Instance.new("Part")
+            marker.Name="PudimFarmRoute"
+            marker.Size=Vector3.new(0.1,0.1,0.1)
+            marker.Anchored=true; marker.Transparency=1
+            marker.CanCollide=false; marker.CanTouch=false; marker.CanQuery=false
+            marker.Parent=workspace
+            local endpoint=Instance.new("Attachment",marker)
+            local beam=Instance.new("Beam",marker)
+            beam.Attachment0=attachment; beam.Attachment1=endpoint
+            beam.Width0=0.15; beam.Width1=0.15
+            beam.FaceCamera=true; beam.LightEmission=1
+            beam.Color=ColorSequence.new(Color3.fromRGB(240,30,55))
+            beam.Enabled=false
+            motion={char=char,root=root,hum=hum,attachment=attachment,drive=drive,
+                marker=marker,beam=beam,rotate=hum.AutoRotate,seated=hum:GetStateEnabled(Enum.HumanoidStateType.Seated)}
+            hum.AutoRotate=false
+        end
+        motion.point, motion.face, motion.updated=point,face,os.clock()
+        HUD.farmMotion=true
+    end
+    HUD.connect(RunService.PreSimulation,function(dt)
+        if held then
+            local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local hum=held.target and held.target:FindFirstChildOfClass("Humanoid")
+            if not root or not hum or hum.Health<=0 or held.tool.Parent~=player.Character
+                or HUD.bodyDistance(held.target,root.Position)>HUD.attackReach
+                or UserInputService:GetFocusedTextBox() or HUD.activity()~="LIVRE" then
+                HUD.releaseAttack()
+            end
+        end
+        if not motion then return end
+        if not HUD.alive or player.Character~=motion.char or not motion.root.Parent
+            or motion.hum.Health<=0 or HUD.activity()~="LIVRE"
+            or UserInputService:GetFocusedTextBox() or os.clock()-motion.updated>0.3 then
+            HUD.stopFarmAction(); return
+        end
+        local root,hum=motion.root,motion.hum
+        hum:SetStateEnabled(Enum.HumanoidStateType.Seated,false)
+        if hum.Sit or hum.SeatPart then hum.Sit=false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        for _,part in ipairs(motion.char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if HUD.collisions[part]==nil then HUD.collisions[part]=part.CanCollide end
+                part.CanCollide=false
+            end
+        end
+        local delta=motion.point-root.Position
+        local distance=delta.Magnitude
+        motion.marker.Position=motion.point
+        motion.beam.Enabled=distance>1
+        local velocity=Vector3.zero
+        if distance>0.15 then
+            velocity=delta.Unit*math.min(HUD.farmSpeed,distance*8,distance/math.max(dt,1/240))
+        end
+        motion.drive.VectorVelocity=velocity
+        root.AssemblyLinearVelocity=velocity
+        root.AssemblyAngularVelocity=Vector3.zero
+        local face=Vector3.new(motion.face.X,root.Position.Y,motion.face.Z)
+        if (face-root.Position).Magnitude>0.01 then root.CFrame=CFrame.lookAt(root.Position,face) end
     end)
-    return "Tentando atacar: "..npc.Name.." / "..tool.Name
+    function HUD.tryAttack(npc,tool,root,now)
+        local hum=npc and npc:FindFirstChildOfClass("Humanoid")
+        if not HUD.isCombatTool(tool) or tool.Parent~=player.Character then
+            HUD.releaseAttack(); return "Aguardando Melee na mochila."
+        end
+        if not hum or hum.Health<=0 then HUD.releaseAttack(); return "Alvo indisponivel." end
+        if UserInputService:GetFocusedTextBox() or HUD.activity()~="LIVRE" then
+            HUD.releaseAttack(); return "Autoclick pausado."
+        end
+        local distance=HUD.bodyDistance(npc,root.Position)
+        if distance>HUD.attackReach then
+            HUD.releaseAttack(); return string.format("Aproximando / %.1f studs ate a superficie",distance)
+        end
+        if held or now<HUD.farmAttackAt then return "Em alcance / autoclick "..HUD.attackBackend end
+        HUD.farmAttackAt=now+1/math.clamp(HUD.attackHz,1,10)
+        local pulse={tool=tool,target=npc,method="Tool"}
+        local camera=workspace.CurrentCamera
+        local blocked=false
+        local reason
+        if camera then
+            local part=npc:FindFirstChild("HumanoidRootPart")
+            local position=camera.ViewportSize*0.5
+            if part then
+                local projected,visible=camera:WorldToScreenPoint(part.Position)
+                if visible then position=Vector2.new(projected.X,projected.Y) end
+            end
+            for _,object in ipairs(player.PlayerGui:GetGuiObjectsAtPosition(position.X,position.Y)) do
+                local p=object
+                while p and p~=player.PlayerGui do
+                    if p==gui or p:IsA("GuiButton") or p:IsA("TextBox") then blocked=true; break end
+                    p=p.Parent
+                end
+                if blocked then break end
+            end
+            pulse.position,pulse.camera=position,camera.CFrame
+            if not blocked then
+                if vim then
+                    local ok,err=pcall(function() vim:SendMouseButtonEvent(position.X,position.Y,0,true,game,0) end)
+                    if ok then pulse.method="Input" else reason=tostring(err) end
+                end
+                if pulse.method=="Tool" then
+                    local ok,err=pcall(function()
+                        VirtualUser:CaptureController()
+                        VirtualUser:Button1Down(position,camera.CFrame)
+                    end)
+                    if ok then pulse.method="VirtualUser" else reason=tostring(err) end
+                end
+            else reason="Interface sobre o alvo: usando Tool. Recolha o hub para permitir cliques." end
+        end
+        local ok,err=pcall(function() tool:Activate() end)
+        held=pulse
+        task.delay(math.min(0.06,0.5/math.max(1,HUD.attackHz)),function()
+            if held==pulse then HUD.releaseAttack() end
+        end)
+        if not ok and pulse.method=="Tool" then return "Ataque recusado: "..tostring(err):sub(1,90) end
+        HUD.attackBackend=pulse.method
+        HUD.attackAttempts=HUD.attackAttempts+1
+        if HUD.progress and HUD.progress.target==npc then HUD.progress.lastTry=now end
+        HUD.attackNote=reason and reason:sub(1,120) or ""
+        return string.format("Autoclick %s / %s / vida %.0f\nTentativas: %d%s",pulse.method,tool.Name,
+            hum.Health,HUD.attackAttempts,HUD.attackNote~="" and (" / "..HUD.attackNote) or "")
+    end
+    HUD.connect(UserInputService.TextBoxFocused,HUD.stopFarmAction)
+    HUD.connect(player.CharacterRemoving,HUD.stopFarmAction)
+    gui.Destroying:Connect(HUD.stopFarmAction)
 end
+
 HUD.manualHold = 0
 HUD.seaBusy = false
 HUD.seaToken = 0
@@ -676,10 +834,7 @@ local autoFarmEnabled = false
 local farmHeight = 15
 local farmDistance = 4
 local farmTarget = nil
-local attacking = false
-local fastAttackSpeed = 0.02
 
-local fastAttackEnabled = false
 
 -- ================= AUTO FARM MENU =================
 criarSecao("AUTO FARM NPC",0,tabFarm)
@@ -692,12 +847,6 @@ criarBotaoToggle("Auto Farm",30,tabFarm,function(v)
     HUD.farmSearchAt = 0
 end)
 
-criarBotaoToggle("Fast Attack",70,tabFarm,function(v)
-	fastAttackEnabled = v
-end)
-
-
-
 criarSlider("ALTURA FARM",5,30,farmHeight,150,tabFarm,function(v)
 	farmHeight = v
 end)
@@ -707,7 +856,6 @@ criarSlider("DISTÂNCIA NPC",2,10,farmDistance,190,tabFarm,function(v)
 end)
 
 criarSlider("RAIO DE BUSCA NPC",100,3000,800,0,tabFarm,function(v) HUD.farmRadius = v end)
-criarBotaoToggle("Equipar Melee / Espada",0,tabFarm,function(v) HUD.autoEquip = v end)
 do
     local filter = Instance.new("TextBox", tabFarm)
     HUD.farmFilterInput = filter
@@ -728,7 +876,9 @@ do
         HUD.farmSearchAt = 0
     end)
     HUD.farmStatus = Instance.new("TextLabel", tabFarm)
-    HUD.farmStatus.Size = UDim2.new(1,0,0,54)
+    HUD.farmStatus.Size = UDim2.new(1,0,0,86)
+    HUD.farmStatus.ClipsDescendants=true
+    HUD.farmStatus.TextTruncate=Enum.TextTruncate.AtEnd
     HUD.farmStatus.BackgroundTransparency = 1
     HUD.farmStatus.TextColor3 = Theme.Text
     HUD.farmStatus.Font = Enum.Font.GothamMedium
@@ -748,16 +898,69 @@ do
     end)
 end
 
+-- Agrupamento local: nao altera tamanho, colisoes, vida ou propriedades ocultas.
+HUD.groupNPCs=false
+HUD.groupRadius=60
+do
+    local nextUpdate=0
+    local summary=""
+    function HUD.groupNearbyNPCs(primary,root,now)
+        if not HUD.groupNPCs then summary=""; return "" end
+        if now<nextUpdate then return summary end
+        nextUpdate=now+0.15
+        local enemies=workspace:FindFirstChild("Enemies")
+        local center=primary and primary:FindFirstChild("HumanoidRootPart")
+        if not enemies or not center or (center.Position-root.Position).Magnitude>25 then
+            summary="Agrupar: aguardando aproximacao do alvo."
+            return summary
+        end
+        local list={}
+        for _,npc in ipairs(enemies:GetChildren()) do
+            if npc~=primary and HUD.validFarmTarget(npc,root,now,HUD.farmRadius) then
+                local part=npc:FindFirstChild("HumanoidRootPart")
+                local distance=(part.Position-center.Position).Magnitude
+                if not part.Anchored and distance<=HUD.groupRadius then
+                    table.insert(list,{npc=npc,part=part,distance=distance})
+                end
+            end
+        end
+        table.sort(list,function(a,b) return a.distance<b.distance end)
+        local attempted,near,denied=0,0,0
+        for index=1,math.min(8,#list) do
+            local entry=list[index]
+            local part=entry.part
+            local canMove=true
+            -- Se o executor informa propriedade de rede, respeita o resultado.
+            if type(isnetworkowner)=="function" then
+                local ok,owned=pcall(isnetworkowner,part)
+                if ok and not owned then canMove=false end
+            end
+            if canMove then
+                local angle=(index-1)*math.pi*2/math.min(8,#list)
+                local point=center.Position+Vector3.new(math.cos(angle)*2.5,0,math.sin(angle)*2.5)
+                local delta=point-part.Position
+                if delta.Magnitude>0.5 then
+                    local offset=delta.Unit*math.min(12,delta.Magnitude)
+                    local ok=pcall(function() part.CFrame=part.CFrame+offset end)
+                    if ok then attempted=attempted+1 else denied=denied+1 end
+                end
+                if (part.Position-center.Position).Magnitude<=7 then near=near+1 end
+            else denied=denied+1 end
+        end
+        summary=string.format("Grupo local: %d perto | %d tentativas | %d sem controle",near,attempted,denied)
+        return summary
+    end
+end
+criarBotaoToggle("Reunir NPCs proximos",0,tabFarm,function(v) HUD.groupNPCs=v end)
+criarSlider("Raio para reunir NPCs",20,200,60,0,tabFarm,function(v) HUD.groupRadius=v end)
+
+
 criarSecao("CONTROLE DE ATAQUE",0,tabFarm)
-criarSlider("Tentativas por segundo",2,15,10,0,tabFarm,function(v) HUD.attackHz = v end)
+criarSlider("Velocidade do farm",25,500,350,0,tabFarm,function(v) HUD.farmSpeed=v end)
+criarSlider("Cliques por segundo",1,10,5,0,tabFarm,function(v) HUD.attackHz = v end)
 criarSlider("Distância de ativação",1,8,4,0,tabFarm,function(v) HUD.attackReach = v end)
-criarBotaoToggle("Ataque perto de NPC (sem farm)",0,tabFarm,function(v) HUD.autoNear = v; if not v then HUD.restoreHitbox() end end)
+criarBotaoToggle("Ataque perto de NPC (sem farm)",0,tabFarm,function(v) HUD.autoNear = v; if not v then HUD.releaseAttack(); end end)
 criarBotaoToggle("Manter altura manual",0,tabFarm,function(v) HUD.manualFarmHeight = v end)
-criarBotaoToggle("Hitbox local do NPC",0,tabFarm,function(v)
-    HUD.localHitbox = v
-    if not v then HUD.restoreHitbox() end
-end)
-criarSlider("Largura da hitbox local",4,16,8,0,tabFarm,function(v) HUD.hitboxWidth = v end)
 do
     local note = Instance.new("TextLabel",tabFarm)
     note.Size = UDim2.new(1,0,0,94)
@@ -766,7 +969,7 @@ do
     note.TextSize = 12
     note.TextColor3 = Theme.Text
     note.TextWrapped = true
-    note.Text = "Sem altura manual, o farm se aproxima para atacar. A frequência controla tentativas; dano e velocidade real dependem da arma. A hitbox é local e não garante alcance extra no servidor."
+    note.Text = "Sem altura manual, o farm se aproxima para atacar. A frequência controla tentativas; dano e velocidade real dependem da arma. O autoclick usa apenas Melee e liga automaticamente em alcance."
 end
 -- ================= ESP FRUTAS =================
 
@@ -891,6 +1094,7 @@ criarSecao("PLAYER",0,tabPlayer)
 
 criarBotaoToggle("Noclip",30,tabPlayer,function(v)
 	noclip = v
+    HUD.manualNoclip=v
 end)
 
 criarBotaoToggle("Water Walk",70,tabPlayer,function(v)
@@ -1844,11 +2048,11 @@ end
 
 -- ================= LOOP =================
 HUD.connect(RunService.RenderStepped, function(dt)
-    if not (autoSafeEnabled or autoFarmEnabled or tpSpeed > 0 or noclip or floorEnabled or next(HUD.collisions) or HUD.hitboxPart) then return end
+    if not (autoSafeEnabled or autoFarmEnabled or tpSpeed > 0 or noclip or floorEnabled or next(HUD.collisions)) then return end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not hum or not root or hum.Health <= 0 then HUD.restoreHitbox(); return end
+    if not hum or not root or hum.Health <= 0 then HUD.stopFarmAction(); return end
 
     if autoSafeEnabled then
         if hum and hum.Health > 0 then
@@ -1874,67 +2078,72 @@ HUD.connect(RunService.RenderStepped, function(dt)
 -- ================= AUTO FARM =================
 local now=os.clock()
 HUD.safeActive=emFuga
-local farmCanMove=autoFarmEnabled and HUD.activity()=="LIVRE"
+local farmCanMove=autoFarmEnabled and HUD.activity()=="LIVRE" and not UserInputService:GetFocusedTextBox()
 if farmCanMove then
     if not HUD.validFarmTarget(farmTarget,root,now,HUD.farmRadius) then
-        farmTarget=nil; HUD.progress=nil
+        HUD.stopFarmAction(); 
+        farmTarget=nil; HUD.progress=nil; HUD.approach=nil
         if now>=HUD.farmSearchAt then
-            HUD.farmSearchAt=now+0.4
+            HUD.farmSearchAt=now+0.25
             local enemies=workspace:FindFirstChild("Enemies")
             local nearest=HUD.farmRadius
-            if enemies then
-                for _,npc in ipairs(enemies:GetChildren()) do
-                    if HUD.validFarmTarget(npc,root,now,HUD.farmRadius) then
-                        local distance=(npc.HumanoidRootPart.Position-root.Position).Magnitude
-                        if distance<nearest then nearest=distance; farmTarget=npc end
-                    end
+            for _,npc in ipairs(enemies and enemies:GetChildren() or {}) do
+                if HUD.validFarmTarget(npc,root,now,HUD.farmRadius) then
+                    local distance=(npc.HumanoidRootPart.Position-root.Position).Magnitude
+                    if distance<nearest then nearest=distance; farmTarget=npc end
                 end
             end
         end
     end
     if farmTarget then
+        local targetRoot=farmTarget.HumanoidRootPart
+        local distance=HUD.bodyDistance(farmTarget,root.Position)
         local recovery=HUD.observeProgress(farmTarget,now)
-        if (HUD.farmIgnored[farmTarget] or 0)>now then
-            HUD.restoreHitbox(); farmTarget=nil
-            HUD.setText(HUD.farmStatus,recovery)
-        else
-            local targetRoot=farmTarget.HumanoidRootPart
-            if now>=HUD.moveAt then
-                HUD.moveAt=now+0.1
-                local offset=Vector3.new(0,farmHeight,farmDistance)
-                if not HUD.manualFarmHeight then
-                    local size=targetRoot==HUD.hitboxPart and HUD.hitboxOriginal.size or targetRoot.Size
-                    local limit=math.max(1,math.min(size.X,size.Y,size.Z)*0.5+HUD.attackReach*0.7)
-                    if offset.Magnitude>limit then offset=offset.Unit*limit end
-                end
-                if HUD.progress and HUD.progress.retries>0 then offset=Vector3.new(offset.Z,offset.Y,0) end
-                local point=targetRoot.Position+offset
-                local params=RaycastParams.new()
-                params.FilterType=Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances={char,farmTarget}
-                params.RespectCanCollide=true
-                local obstruction=workspace:Raycast(targetRoot.Position,point-targetRoot.Position,params)
-                if not obstruction then
-                    local far=HUD.bodyDistance(farmTarget,root.Position)>math.max(0.5,HUD.attackReach-0.5)
-                    if recovery or far or (HUD.manualFarmHeight and (point-root.Position).Magnitude>2) then
-                        root.CFrame=CFrame.lookAt(point,targetRoot.Position)
-                    elseif (targetRoot.Position-root.Position).Magnitude>0.01 then
-                        local direction=(targetRoot.Position-root.Position).Unit
-                        if root.CFrame.LookVector:Dot(direction)<0.95 then root.CFrame=CFrame.lookAt(root.Position,targetRoot.Position) end
-                    end
-                end
-            end
-            HUD.applyHitbox(farmTarget)
-            local tool=HUD.pickWeapon(char,hum,now)
-            HUD.setText(HUD.farmStatus,recovery or HUD.tryAttack(farmTarget,tool,root,now,fastAttackEnabled))
+        if not HUD.approach or HUD.approach.target~=farmTarget then
+            HUD.approach={target=farmTarget,at=now,best=distance}
         end
-    else HUD.restoreHitbox(); HUD.setText(HUD.farmStatus,"Procurando NPC valido no raio e filtro...") end
+        local approach=HUD.approach
+        if distance<approach.best-1 then approach.best=distance; approach.at=now end
+        if distance>HUD.attackReach and now-approach.at>12 then
+            HUD.farmIgnored[farmTarget]=now+20
+            recovery="Sem aproximacao por 12s; tentando outro NPC."
+        end
+        if (HUD.farmIgnored[farmTarget] or 0)>now then
+            HUD.stopFarmAction(); farmTarget=nil
+            HUD.setText(HUD.farmStatus,recovery or "Alvo em intervalo de recuperacao.")
+        else
+            local tool=HUD.pickWeapon(char,hum,now)
+            if not tool then
+                HUD.stopFarmAction()
+                HUD.setText(HUD.farmStatus,"Aguardando Melee na mochila para equipar automaticamente.")
+            else
+                local retries=HUD.progress and HUD.progress.retries or 0
+                local size=targetRoot.Size
+                local separation=math.min(farmDistance,math.max(0.35,HUD.attackReach-0.8))
+                local offset=Vector3.new(0,0,size.Z*0.5+separation)
+                if HUD.manualFarmHeight then offset=Vector3.new(0,farmHeight,farmDistance) end
+                if retries%2==1 then offset=Vector3.new(size.X*0.5+separation,offset.Y,0) end
+                local point=targetRoot.Position+offset
+                if distance<=HUD.attackReach-0.4 and not recovery and not HUD.manualFarmHeight then
+                    point=root.Position
+                end
+                HUD.driveFarm(char,root,hum,point,targetRoot.Position)
+                
+                local group=HUD.groupNearbyNPCs(farmTarget,root,now)
+                local attack=HUD.tryAttack(farmTarget,tool,root,now)
+                HUD.setText(HUD.farmStatus,(recovery or attack)..(group~="" and ("\n"..group) or ""))
+            end
+        end
+    else
+        HUD.stopFarmAction(); 
+        HUD.setText(HUD.farmStatus,"Procurando NPC vivo no raio e filtro...")
+    end
 else
-    HUD.progress=nil
-    if autoFarmEnabled or not HUD.autoNear then HUD.restoreHitbox() end
+    HUD.stopFarmMotion()
+    if autoFarmEnabled or not HUD.autoNear then HUD.releaseAttack(); HUD.progress=nil end
     if autoFarmEnabled then
         local _,reason=HUD.activity()
-        HUD.setText(HUD.farmStatus,"Farm pausado: "..reason)
+        HUD.setText(HUD.farmStatus,"Farm pausado: "..(UserInputService:GetFocusedTextBox() and "digitando" or reason))
     elseif not HUD.autoNear then HUD.setText(HUD.farmStatus,"Auto farm desligado.") end
 end
 
@@ -1943,7 +2152,7 @@ end
     end
 
 
-	if noclip then
+	if noclip or HUD.farmMotion then
 		for _,v in ipairs(char:GetDescendants()) do
 			if v:IsA("BasePart") then
 				if HUD.collisions[v] == nil then HUD.collisions[v] = v.CanCollide end
@@ -1952,7 +2161,7 @@ end
 		end
 	end
 
-	if not noclip then
+	if not noclip and not HUD.farmMotion then
         for part, collision in pairs(HUD.collisions) do
             if part.Parent then part.CanCollide = collision end
             HUD.collisions[part] = nil
@@ -2815,7 +3024,7 @@ do
         if HUD.resetAim then HUD.resetAim() end
         if HUD.stopFly then HUD.stopFly() end
         CancelTeleport("Controles restaurados. Viagem local cancelada.")
-        HUD.restoreHitbox()
+        
         for part, collision in pairs(HUD.collisions) do
             if part.Parent then part.CanCollide = collision end
             HUD.collisions[part] = nil
@@ -2863,9 +3072,9 @@ do
 end
 -- Remove os objetos criados por esta execução ao substituir a interface.
 gui.Destroying:Connect(function()
-    HUD.restoreHitbox()
+    
     local wasFlying = flying
-    autoFarmEnabled, fastAttackEnabled, flying = false, false, false
+    autoFarmEnabled, flying = false, false
     CancelTeleport()
     if floor then floor:Destroy() end
     for _, bill in pairs(espObjects) do bill:Destroy() end
@@ -2906,7 +3115,7 @@ do
         elapsed=0
         if autoFarmEnabled or not HUD.autoNear then HUD.nearTarget=nil; return end
         HUD.safeActive=emFuga
-        if HUD.activity()~="LIVRE" then HUD.progress=nil; HUD.restoreHitbox(); return end
+        if HUD.activity()~="LIVRE" then HUD.releaseAttack(); HUD.progress=nil; return end
         local char=player.Character
         local root=char and char:FindFirstChild("HumanoidRootPart")
         local hum=char and char:FindFirstChildOfClass("Humanoid")
@@ -2930,16 +3139,16 @@ do
             end
         end
         HUD.nearTarget=target
-        HUD.applyHitbox(target)
+        
         if target then
             local result=HUD.observeProgress(target,now)
-            if (HUD.farmIgnored[target] or 0)>now then HUD.nearTarget=nil; HUD.restoreHitbox()
+            if (HUD.farmIgnored[target] or 0)>now then HUD.nearTarget=nil; 
             else
                 if result then result="Vida do alvo sem reducao; verificando novamente sem mover." end
-                result=result or HUD.tryAttack(target,HUD.pickWeapon(char,hum,now),root,now,true)
+                result=result or HUD.tryAttack(target,HUD.pickWeapon(char,hum,now),root,now)
             end
             HUD.setText(HUD.farmStatus,result)
-        else HUD.setText(HUD.farmStatus,"Ataque proximo: aguardando NPC em alcance.") end
+        else HUD.releaseAttack(); HUD.setText(HUD.farmStatus,"Ataque proximo: aguardando NPC em alcance.") end
     end)
 end
 
@@ -5436,7 +5645,7 @@ end)()
             discovery = settings.discovery, sea = HUD.currentSea or 1}
         session = active
         HUD.chestBusy = true
-        HUD.restoreHitbox()
+        HUD.stopFarmAction()
         startButton.Text = "Bau Farm em execucao"
         status.Text = "Preparando locais de baus..."
         -- Independent worker: destroying the hub requests cooperative cleanup.
@@ -5593,7 +5802,7 @@ do
         local p=frame.Position
         return {version=1,values=values,toggles=toggles,aimMode=HUD.savedAimMode,keys=HUD.keys,favorites=HUD.favorites,
             watchEvents=HUD.watchEvents,status=HUD.status,filter=HUD.farmFilter,accent=HUD.accent,
-            weapon=HUD.weaponName,aimFilter=HUD.aimFilter,aimPriority=HUD.aimPriority,
+            aimFilter=HUD.aimFilter,aimPriority=HUD.aimPriority,
             position={p.X.Scale,p.X.Offset,p.Y.Scale,p.Y.Offset}}
     end
     local function save()
@@ -5636,7 +5845,6 @@ do
             HUD.farmFilter=saved.filter
             if HUD.farmFilterInput then HUD.farmFilterInput.Text=saved.filter end
         end
-        if type(saved.weapon)=="string" and #saved.weapon<=100 then HUD.weaponName=saved.weapon end
         if type(saved.aimFilter)=="string" and #saved.aimFilter<=100 then HUD.aimFilter=saved.aimFilter:lower() end
         HUD.aimPriority=saved.aimPriority=="Distancia" and "Distancia" or "Tela"
         local p=saved.position
@@ -5796,30 +6004,14 @@ do
         b.Text=text; roundUI(b,8); HUD.connect(b.Activated,callback)
         return b
     end
-    local weapon
-    local function updateWeapon()
-        weapon.Text="Arma do farm: "..(HUD.weaponName=="" and "Automatica" or HUD.weaponName)
-    end
-    weapon=button(tabFarm,"",function()
-        local names,seen={""},{}
-        local containers={}
-        if player.Character then table.insert(containers,player.Character) end
-        local backpack=player:FindFirstChildOfClass("Backpack")
-        if backpack then table.insert(containers,backpack) end
-        for _,container in ipairs(containers) do
-            for _,tool in ipairs(container:GetChildren()) do
-                if HUD.isCombatTool(tool) and not seen[tool.Name] then
-                    seen[tool.Name]=true; table.insert(names,tool.Name)
-                end
-            end
-        end
-        table.sort(names)
-        local index=table.find(names,HUD.weaponName) or 1
-        HUD.weaponName=names[index%#names+1]
-        HUD.progress=nil; HUD.equipAt=0
-        updateWeapon(); HUD.preferencesChanged()
-    end)
-    updateWeapon()
+    local weapon=Instance.new("TextLabel",tabFarm)
+    weapon.Size=UDim2.new(1,0,0,38)
+    weapon.BackgroundColor3=Theme.Second
+    weapon.TextColor3=Theme.Text
+    weapon.Font=Enum.Font.GothamMedium
+    weapon.TextSize=12
+    weapon.Text="Arma do farm: Melee automatica"
+    roundUI(weapon,8)
     local filter=Instance.new("TextBox",tabAimbot)
     filter.Size=UDim2.new(1,0,0,38); filter.BackgroundColor3=Theme.Second
     filter.TextColor3=Theme.Text; filter.Font=Enum.Font.Gotham; filter.TextSize=12
@@ -5839,8 +6031,8 @@ do
     end)
     updatePriority()
     HUD.resetCombatSettings=function()
-        HUD.weaponName=""; HUD.aimFilter=""; HUD.aimPriority="Tela"
-        filter.Text=""; updateWeapon(); updatePriority(); HUD.resetCombatExtras()
+        HUD.aimFilter=""; HUD.aimPriority="Tela"
+        filter.Text=""; updatePriority(); HUD.resetCombatExtras()
     end
     HUD.connect(player.CharacterRemoving,function() HUD.resetCombatExtras() end)
 end
