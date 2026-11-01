@@ -58,7 +58,7 @@ local Theme = {
 local HUD = {toggles = {}, sliders = {}, jump = 60, scale = 100, status = true, alive = true, connections = {}, collisions = setmetatable({}, {__mode = "k"}), espLoops = {}}
 -- Recursos locais: diagnostico, tarefas cancelaveis e preferencias.
 HUD.favorites = {}
-HUD.keys = {menu="G", players="F", npcs="H", cursor="B"}
+HUD.keys = {menu="G", players="F", npcs="H"}
 HUD.light = true
 HUD.watchEvents = false
 HUD.errorText = "Nenhum erro registrado."
@@ -119,6 +119,7 @@ function HUD.activity()
     if HUD.flying then return "VOO", "Voo ativo" end
     if HUD.safeActive then return "SAFE", "Auto Safe ativo" end
     if os.clock() < HUD.manualHold then return "MANUAL", "Movimento manual" end
+    if HUD.fruitBusy then return "FRUTA", "Buscando fruta no servidor atual" end
     if HUD.chestBusy then return "BAU", "Bau Farm ativo" end
     if HUD.farmPaused then return "PAUSA", "Farm pausado; use Retomar farm" end
     return "LIVRE", "Pronto"
@@ -731,6 +732,7 @@ local tabPlayer = createTab("PLAYER")
 local tabFarm = createTab("Auto-Farm")
 HUD.tabBau = createTab("Bau Farm")
 local tabESP = createTab("ESP")
+HUD.tabFrutas = createTab("Frutas")
 local tabTeleport = createTab("TELEPORT")
 local tabAimbot = createTab("AIMBOT")
 local tabSistema = createTab("SISTEMA")
@@ -1215,16 +1217,6 @@ end
 criarSlider("Distância de ativação",1,25,4,0,tabFarm,function(v) HUD.attackReach = v end)
 criarBotaoToggle("Ataque perto de NPC (sem farm)",0,tabFarm,function(v) HUD.autoNear = v; if not v then HUD.releaseAttack(); end end)
 criarBotaoToggle("Manter altura manual",0,tabFarm,function(v) HUD.manualFarmHeight = v end)
-do
-    local note = Instance.new("TextLabel",tabFarm)
-    note.Size = UDim2.new(1,0,0,94)
-    note.BackgroundTransparency = 1
-    note.Font = Enum.Font.GothamMedium
-    note.TextSize = 12
-    note.TextColor3 = Theme.Text
-    note.TextWrapped = true
-    note.Text = "O farm acompanha as costas do NPC e contorna pelos lados. A distancia pode chegar a 25; isso nao aumenta o alcance real da arma nem garante imunidade. A frequência controla tentativas; dano e velocidade real dependem da arma. Escolha Melee, Espada ou Fruta. O autoclick usa o ataque basico; nao aciona habilidades de fruta. Gas/Hellfire usa distancia automatica e mira de camera para testar acertos."
-end
 -- ================= ESP FRUTAS =================
 
 -- Catalogo local de nomes e raridades. ESP somente texto.
@@ -1282,7 +1274,7 @@ end
 HUD.fruitNames = {}
 for name in pairs(HUD.fruitCatalog) do HUD.fruitNames[name:lower()] = name end
 function HUD.fruitInfo(tool)
-    if not tool or not tool:IsA("Tool") then return nil end
+    if not tool or not (tool:IsA("Tool") or tool:IsA("Model")) then return nil end
     local raw = tool.Name:match("^%s*(.-)%s*$")
     local clean = raw:gsub("%s+[Ff][Rr][Uu][Ii][Tt]$", "")
     -- Alguns objetos usam nomes duplicados, como Rocket-Rocket.
@@ -1290,16 +1282,28 @@ function HUD.fruitInfo(tool)
         if clean:lower() == (canonical.."-"..canonical):lower() then clean=canonical; break end
     end
     local name = HUD.fruitNames[clean:lower()]
-    if not name and clean == raw and tool.ToolTip ~= "Blox Fruit" then return nil end
+    -- Modelos precisam do sufixo Fruit: evita confundir ilhas/efeitos com frutas.
+    if tool:IsA("Model") and clean==raw then return nil end
+    local tooltip=tool:IsA("Tool") and tool.ToolTip:lower():gsub("%s+", "") or ""
+    if not name and clean==raw and tooltip~="bloxfruit" and tooltip~="fruit" then return nil end
     name = name or clean
     local entry = HUD.fruitCatalog[name]
     return {name=name, rarity=entry and entry.rarity or "Unknown"}
+end
+function HUD.fruitPart(object)
+    if not object then return nil end
+    local handle=object:FindFirstChild("Handle",true)
+    if handle and handle:IsA("BasePart") then return handle end
+    if object:IsA("Model") and object.PrimaryPart then return object.PrimaryPart end
+    return object:FindFirstChildWhichIsA("BasePart",true)
 end
 function HUD.isWorldFruit(tool)
     if not HUD.fruitInfo(tool) or not tool:IsDescendantOf(workspace) then return false end
     local parent=tool.Parent
     while parent and parent~=workspace do
-        if parent:IsA("Backpack") or (parent:IsA("Model") and Players:GetPlayerFromCharacter(parent)) then return false end
+        if parent:IsA("Backpack") or parent:IsA("Tool")
+            or (parent:IsA("Model") and (Players:GetPlayerFromCharacter(parent)
+                or parent:FindFirstChildOfClass("Humanoid") or HUD.fruitInfo(parent))) then return false end
         parent=parent.Parent
     end
     return true
@@ -1315,7 +1319,7 @@ local function createFruitESP(tool)
 
 	if not HUD.alive or not fruitESPEnabled or not HUD.isWorldFruit(tool) or fruitEspObjects[tool] then return end
 
-	local part = tool:FindFirstChildWhichIsA("BasePart")
+	local part = HUD.fruitPart(tool)
 	if not part then return end
 
 	local bill = Instance.new("BillboardGui")
@@ -1476,18 +1480,6 @@ criarBotaoToggle("Só inimigos",70,tabESP,function(v)
 	espOnlyEnemies = v
 end)
 
-criarBotaoToggle("ESP frutas",110,tabESP,function(v)
-	fruitESPEnabled = v
-    if HUD.setFruitESP then HUD.setFruitESP(v) end
-end)
-
-criarBotaoToggle("Ocultar fruta equipada no ESP",0,tabESP,function(v) HUD.equippedFruitESP=not v end)
-do
-    local note=Instance.new("TextLabel",tabESP)
-    note.Size=UDim2.new(1,0,0,70); note.BackgroundTransparency=1
-    note.TextColor3=Theme.Text; note.Font=Enum.Font.Gotham; note.TextSize=12; note.TextWrapped=true
-    note.Text="Fruta equipada: somente ferramentas visiveis no personagem. Nao mostra inventario guardado."
-end
 -- ================= SISTEMA =================
 criarSecao("SISTEMA",0,tabSistema)
 
@@ -1649,6 +1641,7 @@ travelStatus.TextWrapped = true
 travelStatus.Text = "Escolha manualmente Sea 1, 2 ou 3 para carregar as ilhas."
 HUD.travelToken = 0
 local function CancelTeleport(message)
+    if HUD.stopFruit then HUD.stopFruit(message) end
     HUD.travelToken = HUD.travelToken + 1
     local oldJob=travelJob
     travelJob=nil
@@ -1873,7 +1866,7 @@ do
     selectedLabel.Font = Enum.Font.GothamMedium
     selectedLabel.TextSize = 12
     selectedLabel.TextWrapped = true
-    selectedLabel.Text = "Escolha seu Sea abaixo. Eventos dependem do mapa carregado."
+    selectedLabel.Text = "Sea não selecionado."
     local selector = Instance.new("Frame",tabTeleport)
     selector.Size = UDim2.new(1,0,0,40)
     selector.BackgroundTransparency = 1
@@ -1949,7 +1942,7 @@ do
             end
         end
         list.Size = UDim2.new(1,0,0,HUD.currentSea and math.max(38,count*38) or 0)
-        if HUD.currentSea then selectedLabel.Text = "SEA "..HUD.currentSea.." / "..count.." de "..#entries.." destinos. [EVENTO] depende de estar carregado." end
+        if HUD.currentSea then selectedLabel.Text = "SEA "..HUD.currentSea.." / "..count.." de "..#entries.." destinos." end
     end
     for sea = 1,3 do
         local selectedSea = sea
@@ -1998,13 +1991,13 @@ end
 do
     criarSecao("VIAJAR ENTRE SEAS",0,tabTeleport)
     local note = Instance.new("TextLabel",tabTeleport)
-    note.Size = UDim2.new(1,0,0,62)
+    note.Size = UDim2.new(1,0,0,40)
     note.BackgroundTransparency = 1
     note.TextColor3 = Theme.Text
     note.Font = Enum.Font.GothamMedium
     note.TextSize = 12
     note.TextWrapped = true
-    note.Text = "O servidor verifica seu acesso ao destino. A viagem não desbloqueia mares."
+    note.Text = "Viagem: pronto."
     local destinations = {
         {name="SEA 1", id=2753915549, command="TravelMain"},
         {name="SEA 2", id=4442272183, command="TravelDressrosa"},
@@ -2302,7 +2295,7 @@ end
 
 -- ================= LOOP =================
 HUD.connect(RunService.RenderStepped, function(dt)
-    if not (autoSafeEnabled or autoFarmEnabled or tpSpeed > 0 or noclip or floorEnabled or next(HUD.collisions)) then return end
+    if not (autoSafeEnabled or autoFarmEnabled or tpSpeed > 0 or noclip or floorEnabled or HUD.fruitBusy or next(HUD.collisions)) then return end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -2407,12 +2400,12 @@ else
     elseif not HUD.autoNear and not HUD.groupAtCursor then HUD.setText(HUD.farmStatus,"Auto farm desligado.") end
 end
 
-    if not HUD.chestBusy and tpSpeed > 0 and hum.MoveDirection.Magnitude > 0 and not HUD.travelActive and not HUD.seaBusy and not HUD.flying and not farmCanMove and not emFuga and now >= HUD.manualHold then
+    if not HUD.fruitBusy and not HUD.chestBusy and tpSpeed > 0 and hum.MoveDirection.Magnitude > 0 and not HUD.travelActive and not HUD.seaBusy and not HUD.flying and not farmCanMove and not emFuga and now >= HUD.manualHold then
         root.CFrame += hum.MoveDirection * tpSpeed * math.min(dt, 0.05) * 60
     end
 
 
-	if noclip or HUD.farmMotion then
+	if noclip or HUD.farmMotion or HUD.fruitBusy then
 		for _,v in ipairs(char:GetDescendants()) do
 			if v:IsA("BasePart") then
 				if HUD.collisions[v] == nil then HUD.collisions[v] = v.CanCollide end
@@ -2421,7 +2414,7 @@ end
 		end
 	end
 
-	if not noclip and not HUD.farmMotion then
+	if not noclip and not HUD.farmMotion and not HUD.fruitBusy then
         for part, collision in pairs(HUD.collisions) do
             if part.Parent then part.CanCollide = collision end
             HUD.collisions[part] = nil
@@ -2845,202 +2838,154 @@ HUD.connect(player.CharacterAdded, function(char)
 	flying = false
     HUD.flying = false
 end)
--- ================= TELEPORTE PRECISO NO CURSOR =================
+-- Soru por ponto do mouse. Diagnostico fica em HUD.soruStatus/Sistema, sem placas.
 do
-    local cooldownUntil = 0
-    local maxDistance = 10000
-    local playerAimRadius = 18
-    local function boatFor(part)
-        local boats = Workspace:FindFirstChild("Boats")
-        local current = part
-        while current and current ~= Workspace do
-            if boats and current.Parent == boats then return current end
-            if current:IsA("Model") then
-                local name = current.Name:lower()
-                if (name:find("boat", 1, true) or name:find("ship", 1, true))
-                    and current:FindFirstChildWhichIsA("BasePart", true) then return current end
-            end
-            current = current.Parent
+    local enabled=true
+    local range=150
+    local effects=workspace:FindFirstChild("PudimSoruEffects")
+    if effects then effects:Destroy() end
+    effects=Instance.new("Folder")
+    effects.Name="PudimSoruEffects"
+    effects.Parent=workspace
+    local hidden={}
+    local effectToken=0
+    local animationTrack,animationCharacter
+    local function restore()
+        for part,value in pairs(hidden) do
+            if part.Parent then part.LocalTransparencyModifier=value end
         end
+        table.clear(hidden)
     end
-    local function waterTarget(ray, support, maximum)
-        if not support or not support.Parent or math.abs(ray.Direction.Y) < 0.0001 then return end
-        local top = support.Position.Y + support.Size.Y / 2
-        local distance = (top - ray.Origin.Y) / ray.Direction.Y
-        if distance <= 0 or distance > maximum then return end
-        local position = ray.Origin + ray.Direction * distance
-        local localPoint = support.CFrame:PointToObjectSpace(position)
-        if math.abs(localPoint.X) > support.Size.X / 2 or math.abs(localPoint.Z) > support.Size.Z / 2 then return end
-        return {Position = position, Normal = Vector3.yAxis, Instance = support,
-            Material = Enum.Material.SmoothPlastic, Distance = distance}
+    local function clearEffects()
+        effectToken+=1
+        restore()
+        if animationTrack then pcall(function() animationTrack:Stop(0); animationTrack:Destroy() end) end
+        animationTrack,animationCharacter=nil,nil
+        effects:ClearAllChildren()
     end
-    local function landingBlocked(center, size, excluded)
-        local probe = Instance.new("Part")
-        probe.Name = "PudimHub_TPLandingCheck"
-        probe.Anchored = true
-        probe.CanCollide, probe.CanTouch, probe.CanQuery = false, false, false
-        probe.Transparency = 1
-        probe.Size, probe.CFrame = size, center
-        local ignore = table.clone(excluded)
-        table.insert(ignore, probe)
-        local overlap = OverlapParams.new()
-        overlap.FilterType = Enum.RaycastFilterType.Exclude
-        overlap.FilterDescendantsInstances = ignore
-        overlap.RespectCanCollide = true
-        overlap.MaxParts = 1
-        probe.Parent = Workspace
-        local ok, parts = pcall(function() return Workspace:GetPartsInPart(probe, overlap) end)
-        probe:Destroy()
-        return not ok or #parts > 0
-    end
-    local function reject(reason)
-        HUD.report("TP no cursor", reason)
-    end
-    HUD.connect(UserInputService.InputBegan, function(input, processed)
-        if processed or UserInputService:GetFocusedTextBox()
-            or input.KeyCode ~= Enum.KeyCode[HUD.keys.cursor] or os.clock() < cooldownUntil then return end
-        local character = player.Character
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        if not root or not humanoid or humanoid.Health <= 0 then return end
-        local cursor = UserInputService:GetMouseLocation()
-        for _, object in ipairs(player.PlayerGui:GetGuiObjectsAtPosition(cursor.X, cursor.Y)) do
-            if object:IsDescendantOf(frame) and frame.Visible then return end
-        end
-        cooldownUntil = os.clock() + 0.2
-        local excluded = {character}
-        local camera = Workspace.CurrentCamera
-        if camera then table.insert(excluded, camera) end
-        if floor then table.insert(excluded, floor) end
-        if HUD.flightMarker then table.insert(excluded, HUD.flightMarker) end
-        for _, other in ipairs(Players:GetPlayers()) do
-            if other.Character and other.Character ~= character then table.insert(excluded, other.Character) end
-        end
-        local enemies = Workspace:FindFirstChild("Enemies")
-        if enemies then table.insert(excluded, enemies) end
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = excluded
-        params.IgnoreWater = false
-        params.RespectCanCollide = true
-        local function teleportTo(destination)
-            if HUD.chestBusy then HUD.stopChest("Parado para teleporte. Repita o comando."); return end
-            CancelTeleport("Viagem cancelada pelo teleporte no cursor.")
-            if HUD.stopFly then HUD.stopFly() end
-            HUD.manualHold = os.clock() + 1
-            if autoFarmEnabled then HUD.farmPaused = true end
-            humanoid.Sit = false
-            root.CFrame = CFrame.new(destination) * root.CFrame.Rotation
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end
-        -- Uma pequena tolerancia na tela prioriza o jogador, inclusive sem chao sob ele.
-        local targetRoot, targetPoint
-        local bestPixels, bestDepth = playerAimRadius * playerAimRadius, math.huge
-        if camera then
-            for _, other in ipairs(Players:GetPlayers()) do
-                local model = other.Character
-                local targetHum = model and model:FindFirstChildOfClass("Humanoid")
-                local candidateRoot = model and model:FindFirstChild("HumanoidRootPart")
-                if model ~= character and targetHum and targetHum.Health > 0 and candidateRoot then
-                    for _, part in ipairs(model:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            local point, visible = camera:WorldToScreenPoint(part.Position)
-                            if visible and point.Z > 0 then
-                                local dx, dy = point.X - cursor.X, point.Y - cursor.Y
-                                local pixels = dx * dx + dy * dy
-                                if pixels < bestPixels or (pixels == bestPixels and point.Z < bestDepth) then
-                                    targetRoot, targetPoint = candidateRoot, part.Position
-                                    bestPixels, bestDepth = pixels, point.Z
-                                end
-                            end
-                        end
+    local function playEffect(char,hum)
+        -- Reuse only an animation explicitly named Soru, when exposed by the game.
+        if animationCharacter~=char then
+            animationCharacter=char
+            local animator=hum:FindFirstChildOfClass("Animator")
+            if animator then
+                for _,item in ipairs(char:GetDescendants()) do
+                    if item:IsA("Animation") and item.AnimationId~="" and
+                        (item.Name:lower():find("soru",1,true) or
+                        (item.Parent and item.Parent.Name:lower():find("soru",1,true))) then
+                        local ok,track=pcall(function() return animator:LoadAnimation(item) end)
+                        if ok then animationTrack=track; break end
                     end
                 end
             end
         end
-        if targetRoot then
-            if (targetRoot.Position - root.Position).Magnitude > maxDistance then
-                reject("Jogador além do alcance de 10.000 studs."); return
-            end
-            local direction = targetPoint - camera.CFrame.Position
-            local obstruction = Workspace:Raycast(camera.CFrame.Position, direction, params)
-            if obstruction and obstruction.Distance < direction.Magnitude - 1 then
-                reject("Jogador encoberto por um obstáculo."); return
-            end
-            local space = OverlapParams.new()
-            space.FilterType = Enum.RaycastFilterType.Exclude
-            space.FilterDescendantsInstances = excluded
-            space.RespectCanCollide = true
-            space.MaxParts = 1
-            if #Workspace:GetPartBoundsInBox(CFrame.new(targetRoot.Position), root.Size + Vector3.new(1, 0.2, 1), space) > 0 then
-                reject("Sem espaço no ponto do jogador."); return
-            end
-            teleportTo(targetRoot.Position)
-            return
-        end
-        local ray = player:GetMouse().UnitRay
-        local rayLength = math.min(15000, (ray.Origin - root.Position).Magnitude + maxDistance)
-        local hit = Workspace:Raycast(ray.Origin, ray.Direction * rayLength, params)
-        -- A mira visual reconhece pecas decorativas do barco; o pouso exige apoio fisico.
-        local visualParams = RaycastParams.new()
-        visualParams.FilterType = Enum.RaycastFilterType.Exclude
-        visualParams.FilterDescendantsInstances = excluded
-        visualParams.IgnoreWater = false
-        visualParams.RespectCanCollide = false
-        local visual = Workspace:Raycast(ray.Origin, ray.Direction * rayLength, visualParams)
-        if visual and boatFor(visual.Instance) and (not hit or visual.Distance <= hit.Distance + 0.1) then hit = visual end
-        local platformHit = floorEnabled and waterTarget(ray, floor, rayLength)
-        if platformHit and (not hit or platformHit.Distance < hit.Distance) then hit = platformHit end
-        if not hit then reject("Nenhuma superfície sob o cursor. Aponte para o chão."); return end
-        local boat = hit.Instance ~= floor and boatFor(hit.Instance)
-        if boat then
-            local bounds, size
-            if boat:IsA("Model") then bounds, size = boat:GetBoundingBox()
-            elseif boat:IsA("BasePart") then bounds, size = boat.CFrame, boat.Size end
-            if bounds then
-                local boatParams = RaycastParams.new()
-                boatParams.FilterType = Enum.RaycastFilterType.Include
-                boatParams.FilterDescendantsInstances = {boat}
-                boatParams.RespectCanCollide = true
-                local top = bounds.Position.Y + size.Magnitude / 2 + 4
-                local deck = Workspace:Raycast(Vector3.new(hit.Position.X, top, hit.Position.Z),
-                    Vector3.new(0, -(size.Magnitude + 8), 0), boatParams)
-                if not deck then reject("Sem apoio sólido nesse ponto do barco."); return end
-                hit = deck
+        if animationTrack then pcall(function()
+            animationTrack:Stop(0)
+            animationTrack.Looped=false
+            animationTrack:Play(0.02,1,1)
+        end) end
+        -- Short local afterimage, without changing collision or the character's actual transparency.
+        effects:ClearAllChildren()
+        effectToken+=1
+        local token=effectToken
+        for _,part in ipairs(char:GetChildren()) do
+            if part:IsA("BasePart") and part.Name~="HumanoidRootPart" and part.Transparency<1 then
+                local ghost=Instance.new("Part")
+                ghost.Size=part.Size; ghost.CFrame=part.CFrame
+                ghost.Anchored=true; ghost.CanCollide=false; ghost.CanTouch=false; ghost.CanQuery=false
+                ghost.CastShadow=false; ghost.Material=Enum.Material.SmoothPlastic
+                ghost.Color=Color3.fromRGB(185,195,210); ghost.Transparency=0.65
+                ghost.Parent=effects
+                TweenService:Create(ghost,TweenInfo.new(0.16),{Transparency=1}):Play()
             end
         end
-        if (hit.Position - root.Position).Magnitude > maxDistance then
-            reject("Ponto além do alcance de 10.000 studs."); return
+        for _,part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if hidden[part]==nil then hidden[part]=part.LocalTransparencyModifier end
+                part.LocalTransparencyModifier=1
+            end
         end
-        if hit.Material == Enum.Material.Water or hit.Normal.Y < 0.6 then
-            reject("Aponte para um chão sólido, não água ou parede."); return
-        end
-        if not boat and hit.Instance ~= floor and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
-            reject("Superfície invisível; escolha um ponto visível."); return
-        end
-        local footOffset = humanoid.HipHeight + root.Size.Y / 2
-        if humanoid.RigType == Enum.HumanoidRigType.R6 then
-            local leg = character:FindFirstChild("Left Leg")
-            footOffset = footOffset + (leg and leg:IsA("BasePart") and leg.Size.Y or 2)
-        end
-        local head = character:FindFirstChild("Head")
-        local aboveRoot = root.Size.Y / 2 + (head and head:IsA("BasePart") and head.Size.Y or 2)
-        local height = footOffset + aboveRoot
-        local destination = hit.Position + Vector3.new(0, footOffset + 0.4, 0)
-        local overhead = Workspace:Raycast(hit.Position + Vector3.new(0, 0.1, 0),
-            Vector3.new(0, height + 0.3, 0), params)
-        if overhead then reject("Sem espaço acima desse ponto."); return end
-        local blocked = landingBlocked(
-            CFrame.new(hit.Position + Vector3.new(0, height / 2 + 0.4, 0)),
-            Vector3.new(math.max(3, root.Size.X), height, math.max(3, root.Size.Z)), excluded)
-        if blocked then reject("Espaço apertado ou ocupado; escolha outro ponto."); return end
-        teleportTo(destination)
-        if boat and hit.Instance:IsA("BasePart") then
-            root.AssemblyLinearVelocity = hit.Instance:GetVelocityAtPosition(destination)
-        end
+        task.delay(0.08,function()
+            if effectToken==token then restore() end
+        end)
+        task.delay(0.18,function()
+            if effectToken==token then effects:ClearAllChildren() end
+        end)
+    end
+    local function status(text) HUD.soruStatus=text end
+    criarBotaoToggle("Soru",0,tabPlayer,function(value)
+        enabled=value
+        if not value then clearEffects() end
+        status(value and "Pronto" or "Desligado")
     end)
+    HUD.toggles[#HUD.toggles].set(true,true)
+    criarSlider("Alcance do Soru",25,500,150,0,tabPlayer,function(value) range=value end)
+    local function step()
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum or hum.Health<=0 then status("Personagem indisponivel"); return end
+        if HUD.seaBusy or HUD.serverBusy or HUD.chestBusy or HUD.safeActive then
+            status("Outra atividade controla o movimento"); return
+        end
+        if root.Anchored or hum.Sit or hum.SeatPart then status("Personagem preso ou sentado"); return end
+        local ray=player:GetMouse().UnitRay
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances={char,effects}
+        params.IgnoreWater=false; params.RespectCanCollide=true
+        local hit=workspace:Raycast(ray.Origin,ray.Direction*2048,params)
+        if not hit then status("Aponte para uma superficie ou alvo"); return end
+        if hit.Material==Enum.Material.Water then status("Escolha um ponto fora da agua"); return end
+        local surface=hit.Instance
+        if not surface or not surface:IsDescendantOf(workspace) then return end
+        if not surface:IsA("Terrain") then
+            if not surface:IsA("BasePart") or not surface.CanCollide or surface.Transparency>=1 then
+                status("Aponte para uma estrutura solida"); return
+            end
+            local ancestor=surface.Parent
+            while ancestor and ancestor~=workspace do
+                if ancestor:IsA("Tool") or ancestor:FindFirstChildOfClass("Humanoid") then
+                    status("Aponte para o mapa, nao para personagens ou itens"); return
+                end
+                ancestor=ancestor.Parent
+            end
+        end
+        -- A mira define um destino, nao uma direcao de avanço da camera.
+        local point=hit.Position
+        local clearance=hit.Normal.Y>0.5 and (hum.HipHeight+root.Size.Y*0.5+0.2)
+            or math.max(root.Size.X,root.Size.Z)*0.5+0.5
+        local destination=point+hit.Normal*clearance
+        local delta=destination-root.Position
+        if delta.Magnitude<0.5 then status("Ja esta no ponto"); return end
+        -- Never shorten a teleport: a partial segment may end in empty sky.
+        if delta.Magnitude>range then status("Superficie fora do alcance"); return end
+        -- A blocked route cancels instead of choosing an unselected point in mid-air.
+        params.RespectCanCollide=true
+        local obstacle=workspace:Blockcast(root.CFrame,root.Size*0.9,delta,params)
+        if obstacle and obstacle.Distance<delta.Magnitude-0.05 then
+            status("Caminho bloqueado"); return
+        end
+        if HUD.stopFly then HUD.stopFly() end
+        CancelTeleport("Viagem cancelada pelo Soru.")
+        HUD.stopFarmAction()
+        HUD.manualHold=os.clock()+0.8
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        local visualOk,visualErr=pcall(playEffect,char,hum)
+        if not visualOk then restore(); HUD.report("Efeito Soru",visualErr) end
+        root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
+        status("Movimento local solicitado")
+    end
+    HUD.connect(UserInputService.InputBegan,function(input)
+        if not enabled or input.KeyCode~=Enum.KeyCode.R or UserInputService:GetFocusedTextBox() then return end
+        local ok,err=pcall(step)
+        if not ok then status(tostring(err)); HUD.report("Soru",err) end
+    end)
+    HUD.connect(player.CharacterRemoving,clearEffects)
+    gui.Destroying:Connect(function() enabled=false; clearEffects(); effects:Destroy() end)
 end
+
 -- ================= PAINEL / BUSCA / PREFERÊNCIAS V010 =================
 do
     local function textCard(parent, text, height)
@@ -3130,9 +3075,6 @@ do
     healthFill.BorderSizePixel = 0
     roundUI(healthFill, 2)
     local resources = textCard(tabOverview, "Beli: —   |   Fragmentos: —", 62)
-    criarSecao("ATALHOS", 0, tabOverview)
-    local shortcutCard = textCard(tabOverview, "G  ·  Abrir / recolher menu\nF  ·  Mira jogadores / H  ·  Mira NPCs\nB  ·  Teleporte no cursor\nAlt + clique  ·  Alternar voo", 110)
-    textCard(tabOverview, "Movimento: clique ou arraste as barras. Você também pode digitar um valor. O pulo começa em 60.", 78)
     action(tabOverview, "Centralizar janela", function() frame.Position = UDim2.fromScale(0.5, 0.5) end)
 
     local footer = Instance.new("TextLabel", frame)
@@ -3150,7 +3092,6 @@ do
         elapsed += dt
         frames += 1
         if elapsed < 1.5 then return end
-        HUD.setText(shortcutCard,HUD.keys.menu..": menu / "..HUD.keys.players..": mira jogadores / "..HUD.keys.npcs..": mira NPCs\n"..HUD.keys.cursor..": TP cursor / Alt + clique: voo")
         local fps = math.floor(frames / elapsed + 0.5)
         elapsed, frames = 0, 0
         footer.Visible = HUD.status
@@ -3249,7 +3190,7 @@ do
     end)
     action(tabSettings, "Centralizar janela", function() frame.Position = UDim2.fromScale(0.5, 0.5) end)
     criarSecao("PREFERÊNCIAS", 0, tabSettings)
-    local feedback = textCard(tabSettings, "V033 salva preferencias automaticamente por conta. Abaixo: importar/exportar o arquivo antigo. Valores, botoes ligados/desligados e modo da mira sao restaurados ao abrir.", 88)
+    local feedback = textCard(tabSettings, "Preferências: pronto.", 40)
     local settingsFile = "PudimHub_UI_v005.json"
     action(tabSettings, "Exportar preferencias antigas", function()
         if type(writefile) ~= "function" then feedback.Text = "Este ambiente não oferece salvamento em arquivo."; return end
@@ -3420,13 +3361,13 @@ do
     local attempted = {[game.JobId] = true}
     local buttons = {}
     local status = Instance.new("TextLabel", tabSistema)
-    status.Size = UDim2.new(1, 0, 0, 80)
+    status.Size = UDim2.new(1, 0, 0, 40)
     status.BackgroundTransparency = 1
     status.TextColor3 = Theme.Text
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 12
     status.TextWrapped = true
-    status.Text = "Busca no Sea atual. Menos cheio nao garante vazio. Filtro Brasil indisponivel: pais nao confirmado pela lista publica."
+    status.Text = "Busca de servidores: pronto."
     local function finish(message)
         busy, HUD.serverBusy, pending = false, false, nil
         status.Text = message
@@ -5227,8 +5168,8 @@ local function installChestMap()
     local legend2 = footer('', -102, 18, 11)
     legend2.RichText = true
     legend2.Text = '<font color="#717D8F">â—</font> Empty   <font color="#FF7184">â—</font> Target   <font color="#BA93F7">â—†</font> Dealer   <font color="#FFFFFF">â–²</font> You'
-    local help = footer("Drag to pan Â· Tap a group to zoom Â· S / G / D = grade", -81, 18, 10)
-    local details = footer("Tap a chest for its value, distance and respawn time.", -60, 50, 12)
+    local help = footer("", -81, 18, 10)
+    local details = footer("Nenhum baú selecionado.", -60, 50, 12)
     details.TextWrapped, details.TextTruncate = true, Enum.TextTruncate.None
     details.TextYAlignment = Enum.TextYAlignment.Top
     details.TextColor3 = light
@@ -5572,7 +5513,7 @@ local function installChestMap()
         drawLine(routeLine, root and project(root.Position), currentRouteDestination and project(currentRouteDestination))
         drawLine(nextLine, currentTargetBoxCenter and project(currentTargetBoxCenter), currentNextRoutePosition and project(currentNextRoutePosition))
         subtitle.Text = string.format("%d live Â· %d expected Â· %d cooling Â· %d far hidden", ready, expected, respawning, omitted)
-        help.Text = string.format("%d in view Â· Drag to pan Â· Tap groups to zoom Â· S/G/D = grade", visible)
+        help.Text = string.format("%d in view", visible)
         if selected then
             local state = status(selected, now)
             local reward = economyOf(selected).rewards[REWARD_SEA]
@@ -5602,7 +5543,7 @@ local function installChestMap()
                 details.Text = string.format("Next pass: %d chests Â· ~%s value\n%d stops ahead Â· blue = expected while unloaded",
                     #plan.first.records, formatMoney(plan.first.value), #plan.route)
             else
-                details.Text = "Locations and states stay in memory when unloaded.\nTap a chest for value, distance and respawn time."
+                details.Text = "Nenhum baú selecionado."
             end
         end
     end
@@ -5884,8 +5825,7 @@ end)()
         return item
     end
     criarSecao("BAU FARM", 0, page)
-    text("Rotas automaticas com barco ou a pe. Inicie perto de um Boat Dealer para usar o Dinghy. O motor pode comprar esse barco com Beli.", 64)
-    local status = text("Parado. Clique em Iniciar Bau Farm.")
+    local status = text("Parado.")
     local metrics = text("Saldo da sessao: -- | Beli/min: --", 54)
     local startButton, stopButton
     function HUD.stopChest(reason)
@@ -5943,7 +5883,6 @@ end)()
         local slider = HUD.sliders[page.Name.."/Velocidade Bau (studs/s)"]
         if slider then slider.set(255) end
     end)
-    text("Velocidade aplicada a pe e no barco (barco varia cerca de 5 studs/s). O saldo inclui gastos e outros ganhos. Auto Farm NPC pausa durante esta sessao.", 70)
     local elapsed = 0
     HUD.connect(RunService.Heartbeat, function(dt)
         if not session then return end
@@ -5961,6 +5900,345 @@ end)()
     end)
     gui.Destroying:Connect(function() HUD.stopChest("Hub fechado.") end)
 end
+
+-- Frutas locais: deteccao, ESP existente e deslocamento cancelavel.
+-- Implementacao integrada; nao carrega Adminus nem troca de servidor.
+do
+    local page = HUD.tabFrutas
+    local candidates = setmetatable({}, {__mode="k"})
+    local ignored = setmetatable({}, {__mode="k"})
+    local session, elapsed = nil, 0
+    local auto, speed, filter = false, 250, ""
+    local status = Instance.new("TextLabel",page)
+    status.Size=UDim2.new(1,0,0,76)
+    status.BackgroundColor3=Theme.Second; status.TextColor3=Theme.Text
+    status.Font=Enum.Font.Gotham; status.TextSize=12; status.TextWrapped=true
+    status.Text="Buscando frutas carregadas neste cliente..."; roundUI(status,8)
+    local nearestLabel = status:Clone()
+    nearestLabel.Size=UDim2.new(1,0,0,60); nearestLabel.Text="Nenhuma fruta detectada."
+    nearestLabel.Parent=page
+    local function button(text, callback)
+        local b=Instance.new("TextButton",page)
+        b.Size=UDim2.new(1,0,0,38); b.BackgroundColor3=Theme.Button
+        b.TextColor3=Theme.Text; b.Font=Enum.Font.GothamMedium; b.TextSize=12
+        b.Text=text; roundUI(b,8); HUD.connect(b.Activated,callback)
+        return b
+    end
+    criarSecao("ESP DE FRUTAS",0,page)
+    criarBotaoToggle("ESP frutas",0,page,function(value)
+        fruitESPEnabled=value
+        if HUD.setFruitESP then HUD.setFruitESP(value) end
+    end)
+    criarBotaoToggle("Ocultar fruta equipada no ESP",0,page,function(value)
+        HUD.equippedFruitESP=not value
+    end)
+    criarSecao("BUSCA E TELEPORTE",0,page)
+    local function owned(object)
+        local backpack=player:FindFirstChildOfClass("Backpack")
+        return object.Parent and ((backpack and object:IsDescendantOf(backpack))
+            or (player.Character and object:IsDescendantOf(player.Character)))
+    end
+    local function register(object)
+        if object:IsA("Tool") or (object:IsA("Model") and HUD.fruitInfo(object)) then candidates[object]=true end
+    end
+    local function inspectAdded(object)
+        -- Handle pode chegar depois do Tool/Model por streaming.
+        register(object)
+        local parent=object.Parent
+        while parent and parent~=workspace do
+            if parent:IsA("Tool") or parent:IsA("Model") then register(parent) end
+            parent=parent.Parent
+        end
+    end
+    HUD.connect(workspace.DescendantAdded,inspectAdded)
+    HUD.startJob(function()
+        local pending={workspace}
+        local count=0
+        while HUD.alive and #pending>0 do
+            local object=table.remove(pending)
+            if object==workspace or object:IsDescendantOf(workspace) then
+                register(object)
+                for _,child in ipairs(object:GetChildren()) do table.insert(pending,child) end
+            end
+            count+=1
+            if count%100==0 then task.wait() end
+        end
+    end)
+    local function nearest(root)
+        local best, distance, count=nil, math.huge, 0
+        local found={}
+        for object in pairs(candidates) do
+            if not object:IsDescendantOf(workspace) then
+                candidates[object]=nil
+            elseif HUD.isWorldFruit(object) then
+                local part=HUD.fruitPart(object)
+                if part then
+                    if fruitESPEnabled then createFruitESP(object) end
+                    local info=HUD.fruitInfo(object)
+                    if filter=="" or info.name:lower():find(filter,1,true) then
+                        count+=1
+                        local d=(root.Position-part.Position).Magnitude
+                        table.insert(found,{object=object,distance=d,name=info.name,rarity=info.rarity})
+                        if d<distance and (ignored[object] or 0)<=os.clock() then
+                            best, distance=object,d
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(found,function(a,b) return a.distance<b.distance end)
+        return best,distance,count,found
+    end
+    local function stop(reason)
+        local old=session
+        session=nil; HUD.fruitBusy=false
+        if old then
+            if old.tween then old.tween:Cancel() end
+            if old.hold then old.hold:Destroy() end
+            if old.attachment then old.attachment:Destroy() end
+            if old.root.Parent then
+                old.root.AssemblyLinearVelocity=Vector3.zero
+                old.root.AssemblyAngularVelocity=Vector3.zero
+            end
+            if old.hum.Parent then
+                old.hum.AutoRotate=old.rotate
+                old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated)
+            end
+            if not HUD.manualNoclip and not HUD.farmMotion then
+                for part,value in pairs(HUD.collisions) do
+                    if part.Parent then part.CanCollide=value end
+                    HUD.collisions[part]=nil
+                end
+            end
+        end
+        if reason and HUD.alive then HUD.setText(status,reason) end
+    end
+    HUD.stopFruit=stop
+    local function blocked()
+        return HUD.travelActive or HUD.chestBusy or HUD.flying or HUD.safeActive
+            or HUD.seaBusy or HUD.serverBusy or os.clock()<HUD.manualHold
+    end
+    local function start(object)
+        if session or blocked() then return false end
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local part=HUD.fruitPart(object)
+        if not root or not hum or hum.Health<=0 or root.Anchored
+            or not part or not HUD.isWorldFruit(object) then return false end
+        HUD.stopFarmAction()
+        HUD.fruitBusy=true
+        session={object=object,char=char,root=root,hum=hum,rotate=hum.AutoRotate,
+            seated=hum:GetStateEnabled(Enum.HumanoidStateType.Seated),
+            lastProgress=os.clock(),lastPosition=root.Position,
+            deadline=os.clock()+math.min(600,(root.Position-part.Position).Magnitude/speed+20)}
+        -- Compensa gravidade sem ancorar o personagem durante a viagem/coleta.
+        session.attachment=Instance.new("Attachment",root)
+        session.attachment.Name="PudimFruitAttachment"
+        session.hold=Instance.new("LinearVelocity",root)
+        session.hold.Name="PudimFruitHold"
+        session.hold.Attachment0=session.attachment
+        session.hold.RelativeTo=Enum.ActuatorRelativeTo.World
+        session.hold.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector
+        session.hold.ForceLimitsEnabled=false
+        session.hold.VectorVelocity=Vector3.zero
+        hum.AutoRotate=false; hum.Sit=false
+        hum:SetStateEnabled(Enum.HumanoidStateType.Seated,false)
+        HUD.setText(status,"Indo ate "..HUD.fruitInfo(object).name.."...")
+        return true
+    end
+    local box=Instance.new("TextBox",page)
+    box.Size=UDim2.new(1,0,0,38); box.BackgroundColor3=Theme.Second
+    box.TextColor3=Theme.Text; box.Font=Enum.Font.Gotham; box.TextSize=12
+    box.PlaceholderText="Filtrar fruta pelo nome (vazio = todas)"; box.Text=""
+    box.ClearTextOnFocus=false; roundUI(box,8)
+    HUD.connect(box.FocusLost,function()
+        filter=box.Text:lower():match("^%s*(.-)%s*$"):sub(1,80)
+        box.Text=filter; stop("Filtro atualizado.")
+    end)
+    button("TP suave para a fruta mais proxima",function()
+        if blocked() then HUD.setText(status,"Pare a outra viagem, voo ou Bau Farm antes de buscar a fruta."); return end
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then HUD.setText(status,"Aguardando personagem."); return end
+        stop()
+        local object=nearest(root)
+        if not object then HUD.setText(status,"Nenhuma fruta disponivel para este filtro no mapa carregado."); return end
+        if not start(object) then HUD.setText(status,"Nao foi possivel iniciar; confira o personagem e o alvo.") end
+    end)
+    criarBotaoToggle("Coletar frutas automaticamente",0,page,function(value)
+        auto=value
+        if not value then stop("Coleta automatica desligada.") end
+    end)
+    local function pauseAuto()
+        auto=false
+        for _,control in ipairs(HUD.toggles) do
+            if control.key==page.Name.."/Coletar frutas automaticamente" then control.set(false); break end
+        end
+        stop()
+    end
+    button("Parar busca / TP de fruta",function()
+        pauseAuto()
+        CancelTeleport("Viagem cancelada na aba Frutas.")
+        stop("Busca de frutas parada.")
+    end)
+    criarSlider("Velocidade ate a fruta (studs/s)",50,350,250,0,page,function(value)
+        speed=value
+        if session then
+            if session.tween then session.tween:Cancel(); session.tween=nil end
+            session.destination=nil
+            local part=HUD.fruitPart(session.object)
+            if part then session.deadline=os.clock()+math.min(600,(session.root.Position-part.Position).Magnitude/speed+20) end
+        end
+    end)
+    criarSecao("FRUTAS DETECTADAS / CLIQUE PARA IR",0,page)
+    local rows={}
+    for i=1,6 do
+        local row={}
+        row.button=button("",function()
+            local target=row.object
+            if blocked() then HUD.setText(status,"Aguarde ou pare a outra atividade antes de viajar."); return end
+            pauseAuto()
+            if not target or not start(target) then HUD.setText(status,"Esta fruta nao esta mais disponivel.") end
+        end)
+        row.button.Visible=false
+        rows[i]=row
+    end
+    criarSecao("LOJA E GACHA / NPCS",0,page)
+    local npcStatus=status:Clone(); npcStatus.Size=UDim2.new(1,0,0,40); npcStatus.Parent=page
+    npcStatus.Text="NPCs: pronto."
+    local npcNames={
+        shop={bloxfruitdealer=true,bloxfruitsdealer=true},
+        gacha={bloxfruitgacha=true,bloxfruitsgacha=true,bloxfruitdealercousin=true,bloxfruitsdealercousin=true,zioles=true},
+    }
+    local function findNpc(kind)
+        local folder=workspace:FindFirstChild("NPCs")
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not folder or not root then return end
+        local best,part,distance=nil,nil,math.huge
+        for _,npc in ipairs(folder:GetChildren()) do
+            local name=npc.Name:lower():gsub("%b[]", ""):gsub("[^%a]", "")
+            if npc:IsA("Model") and npcNames[kind][name] then
+                local p=npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart
+                    or npc:FindFirstChildWhichIsA("BasePart",true)
+                if p and p:IsA("BasePart") then
+                    local d=(p.Position-root.Position).Magnitude
+                    if d<distance then best,part,distance=npc,p,d end
+                end
+            end
+        end
+        return best,part
+    end
+    local function goNpc(kind)
+        pauseAuto()
+        if HUD.seaBusy or HUD.serverBusy or HUD.chestBusy then
+            HUD.setText(npcStatus,"Pare o Bau Farm ou aguarde a troca de Sea/servidor."); return
+        end
+        if not HUD.currentSea then
+            HUD.setText(npcStatus,"Selecione seu Sea na aba Teleporte antes de viajar para o NPC."); return
+        end
+        local npc,part=findNpc(kind)
+        if not npc then
+            HUD.setText(npcStatus,"NPC nao encontrado no mapa carregado. Aproxime-se da ilha do vendedor/Gacha e tente novamente."); return
+        end
+        TweenTeleport({nome=npc.Name,npc=npc.Name,fallback=part.CFrame*CFrame.new(0,0,5)})
+        HUD.setText(npcStatus,"Destino: "..npc.Name..". Ao chegar, use o dialogo do jogo. Acompanhe a viagem na aba Teleporte.")
+    end
+    button("Abrir loja de frutas",function()
+        pauseAuto()
+        local pg=player:FindFirstChildOfClass("PlayerGui")
+        local main=pg and pg:FindFirstChild("Main")
+        -- Reutiliza apenas um painel existente do jogo; nao envia compra remota.
+        local shop=main and main:FindFirstChild("FruitShop",true)
+        if shop and shop:IsA("GuiObject") then
+            shop.Visible=true
+            HUD.setText(npcStatus,"Painel da loja exibido. Se estiver vazio, use TP para o vendedor e abra o dialogo.")
+        else
+            goNpc("shop")
+        end
+    end)
+    button("TP para vendedor de frutas",function() goNpc("shop") end)
+    button("Acessar Gacha / NPC de girar fruta",function() goNpc("gacha") end)
+    button("Parar viagem para NPC",function()
+        pauseAuto(); CancelTeleport("Viagem para NPC cancelada.")
+        HUD.setText(npcStatus,"Viagem parada.")
+    end)
+    local function tick(dt)
+        elapsed+=dt
+        if elapsed<0.15 then return end
+        elapsed=0
+        local now=os.clock()
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local object,distance,count,found
+        if root then object,distance,count,found=nearest(root) end
+        for i,row in ipairs(rows) do
+            local item=found and found[i]
+            row.object=item and item.object or nil
+            row.button.Visible=item~=nil
+            if item then HUD.setText(row.button,item.name.." / "..math.floor(item.distance).." studs / TP") end
+        end
+        HUD.setText(nearestLabel,object and (HUD.fruitInfo(object).name.." / "..math.floor(distance).." studs\n"..count.." fruta(s) neste filtro")
+            or "Nenhuma fruta disponivel no mapa carregado para este filtro.")
+        local s=session
+        if not s then
+            if auto and object and not blocked() and not UserInputService:GetFocusedTextBox() then start(object) end
+            return
+        end
+        if owned(s.object) then
+            stop("Coleta confirmada na mochila/personagem."); return
+        end
+        if blocked() or player.Character~=s.char or not s.root.Parent or s.hum.Health<=0
+            or s.root.Anchored then stop("Viagem interrompida por outra atividade ou pelo personagem."); return end
+        if not HUD.isWorldFruit(s.object) then stop("Fruta removida, recolhida ou fora do mapa carregado."); return end
+        local part=HUD.fruitPart(s.object)
+        if not part then stop("A parte fisica da fruta deixou de estar disponivel."); return end
+        if now>s.deadline then ignored[s.object]=now+15; stop("Tempo limite; alvo ignorado por 15 segundos."); return end
+        if (s.root.Position-s.lastPosition).Magnitude>1 then
+            s.lastPosition=s.root.Position; s.lastProgress=now
+        end
+        local d=(s.root.Position-part.Position).Magnitude
+        if d>4 and now-s.lastProgress>5 then
+            ignored[s.object]=now+15; stop("Sem deslocamento; alvo ignorado por 15 segundos."); return
+        end
+        for _,item in ipairs(s.char:GetDescendants()) do
+            if item:IsA("BasePart") then
+                if HUD.collisions[item]==nil then HUD.collisions[item]=item.CanCollide end
+                item.CanCollide=false
+            end
+        end
+        -- Alvo vivo: refaz o tween quando a fruta muda de posicao.
+        local destination=part.Position
+        if not s.destination or (destination-s.destination).Magnitude>2
+            or (d>4 and now>(s.tweenEnds or 0)+0.3) then
+            if s.tween then s.tween:Cancel() end
+            s.destination=destination
+            local duration=math.max(d/speed,0.1)
+            s.tweenEnds=now+duration
+            s.tween=TweenService:Create(s.root,TweenInfo.new(duration,Enum.EasingStyle.Linear),
+                {CFrame=CFrame.new(destination)*s.root.CFrame.Rotation})
+            s.tween:Play()
+        end
+        s.root.AssemblyLinearVelocity=Vector3.zero
+        s.root.AssemblyAngularVelocity=Vector3.zero
+        if d<=4 then
+            s.arrivedAt=s.arrivedAt or now
+            HUD.setText(status,"Perto de "..HUD.fruitInfo(s.object).name.."; aguardando coleta pelo jogo...")
+            if now-s.arrivedAt>5 then
+                ignored[s.object]=now+15
+                stop("Chegou, mas o jogo nao confirmou a coleta. Tente recolher manualmente.")
+            end
+        else
+            s.arrivedAt=nil
+            HUD.setText(status,"Indo ate "..HUD.fruitInfo(s.object).name.." / "..math.floor(d).." studs")
+        end
+    end
+    HUD.connect(RunService.Heartbeat,function(dt)
+        local ok,err=pcall(tick,dt)
+        if not ok then auto=false; stop("Erro na busca; consulte Sistema."); HUD.report("Frutas",err) end
+    end)
+    HUD.connect(player.CharacterRemoving,function() stop("Personagem removido; aguardando renascimento.") end)
+    gui.Destroying:Connect(function() auto=false; stop() end)
+end
+
 
 -- Interface e armazenamento: implementacao propria, sem bibliotecas remotas.
 do
@@ -6018,10 +6296,10 @@ do
         HUD.watchEvents=not HUD.watchEvents
         if HUD.preferencesChanged then HUD.preferencesChanged() end
     end)
-    local eventLabel=label(tabTeleport,"Observador desligado. Somente objetos carregados neste cliente.",66)
+    local eventLabel=label(tabTeleport,"Observador desligado.",40)
     local keyInputs={}
     criarSecao("ATALHOS PERSONALIZADOS",0,tabSettings)
-    for _,entry in ipairs({{"menu","Menu"},{"players","Mira jogadores"},{"npcs","Mira NPCs"},{"cursor","TP cursor"}}) do
+    for _,entry in ipairs({{"menu","Menu"},{"players","Mira jogadores"},{"npcs","Mira NPCs"}}) do
         local id,caption=entry[1],entry[2]
         local box=Instance.new("TextBox",tabSettings)
         box.Size=UDim2.new(1,0,0,36)
@@ -6036,10 +6314,10 @@ do
         keyInputs[id]={box=box,caption=caption}
         HUD.connect(box.FocusLost,function()
             local key=box.Text:upper():match("^%s*([A-Z])%s*$")
-            local allowed=key and not string.find("WASD",key,1,true)
+            local allowed=key and not string.find("WASDR",key,1,true)
             for other,value in pairs(HUD.keys) do if other~=id and value==key then allowed=false end end
             if allowed then HUD.keys[id]=key; if HUD.preferencesChanged then HUD.preferencesChanged() end
-            else HUD.report("Atalho","Use uma letra livre; W/A/S/D ficam reservados para movimento.") end
+            else HUD.report("Atalho","Use uma letra livre; W/A/S/D e R ficam reservados para movimento/Soru.") end
             box.Text=caption..": "..HUD.keys[id]
         end)
     end
@@ -6086,7 +6364,7 @@ do
             local candidate,seen={},{}
             for id,default in pairs(HUD.keys) do
                 local key=saved.keys[id]
-                if type(key)~="string" or not key:match("^[A-Z]$") or key:find("[WASD]") or seen[key] then candidate=nil; break end
+                if type(key)~="string" or not key:match("^[A-Z]$") or key:find("[WASDR]") or seen[key] then candidate=nil; break end
                 candidate[id]=key; seen[key]=true
             end
             if candidate then HUD.keys=candidate end
@@ -6115,6 +6393,11 @@ do
         end
         -- Ativa os controles depois de restaurar valores, filtros e arma.
         if type(saved.toggles)=="table" then
+            -- Migra os dois controles movidos de ESP para Frutas.
+            for _,caption in ipairs({"ESP frutas","Ocultar fruta equipada no ESP"}) do
+                local target="Frutas/"..caption
+                if saved.toggles[target]==nil then saved.toggles[target]=saved.toggles["ESP/"..caption] end
+            end
             for _,control in ipairs(HUD.toggles) do
                 local value=saved.toggles[control.key]
                 if type(value)=="boolean" then control.set(value,true) end
@@ -6159,7 +6442,7 @@ do
         if input.UserInputType==Enum.UserInputType.MouseButton1 then clampWindow() end
     end)
     HUD.resetExtras=function()
-        HUD.keys={menu="G",players="F",npcs="H",cursor="B"}
+        HUD.keys={menu="G",players="F",npcs="H"}
         HUD.favorites={}; HUD.light=true; HUD.watchEvents=false
         accent(1)
         for id,item in pairs(keyInputs) do item.box.Text=item.caption..": "..HUD.keys[id] end
@@ -6179,7 +6462,7 @@ do
         HUD.setText(accentButton,"Cor do HUD: "..(HUD.accent==1 and "Vermelho clássico" or "Rubi"))
         HUD.setText(watchButton,"Observar eventos carregados: "..(HUD.watchEvents and "Sim" or "Não"))
         shadow.Visible=false
-        if not HUD.watchEvents then HUD.setText(eventLabel,"Observador desligado. Somente objetos carregados neste cliente.")
+        if not HUD.watchEvents then HUD.setText(eventLabel,"Observador desligado.")
         elseif eventElapsed>=3 then
             eventElapsed=0
             local origin=workspace:FindFirstChild("_WorldOrigin")
