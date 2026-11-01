@@ -1,3 +1,65 @@
+-- PudimHub: inicializacao com progresso por etapas.
+local loading = {}
+do
+    local player=game:GetService("Players").LocalPlayer
+    local parent=player:WaitForChild("PlayerGui")
+    local previous=parent:FindFirstChild("PudimHub_Loading")
+    if previous then previous:Destroy() end
+    local gui=Instance.new("ScreenGui")
+    gui.Name="PudimHub_Loading"; gui.ResetOnSpawn=false
+    gui.IgnoreGuiInset=true; gui.DisplayOrder=10000
+    gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; gui.Parent=parent
+    loading.gui=gui
+    local backdrop=Instance.new("Frame",gui)
+    backdrop.Size=UDim2.fromScale(1,1); backdrop.BackgroundColor3=Color3.fromRGB(5,5,8)
+    backdrop.BackgroundTransparency=0.25; backdrop.BorderSizePixel=0; backdrop.Active=true
+    local card=Instance.new("Frame",backdrop)
+    card.AnchorPoint=Vector2.new(0.5,0.5); card.Position=UDim2.fromScale(0.5,0.5)
+    card.Size=UDim2.new(0.86,0,0,208); card.BackgroundColor3=Color3.fromRGB(16,9,14)
+    card.BorderSizePixel=0
+    local bounds=Instance.new("UISizeConstraint",card); bounds.MaxSize=Vector2.new(420,208)
+    Instance.new("UICorner",card).CornerRadius=UDim.new(0,14)
+    local stroke=Instance.new("UIStroke",card); stroke.Color=Color3.fromRGB(240,30,55); stroke.Transparency=0.4
+    local function label(value,y,height,size,color)
+        local text=Instance.new("TextLabel",card)
+        text.Position=UDim2.new(0,24,0,y); text.Size=UDim2.new(1,-48,0,height)
+        text.BackgroundTransparency=1; text.Text=value; text.Font=Enum.Font.GothamMedium
+        text.TextSize=size; text.TextColor3=color; text.TextXAlignment=Enum.TextXAlignment.Left
+        text.TextTruncate=Enum.TextTruncate.AtEnd
+        return text
+    end
+    local title=label("PUDIMHUB",24,32,24,Color3.fromRGB(245,240,243)); title.Font=Enum.Font.GothamBold
+    label("Preparando seu painel",62,22,13,Color3.fromRGB(170,155,163))
+    loading.status=label("Iniciando...",103,24,13,Color3.fromRGB(235,220,226))
+    local track=Instance.new("Frame",card)
+    track.Position=UDim2.new(0,24,0,141); track.Size=UDim2.new(1,-48,0,7)
+    track.BorderSizePixel=0; track.BackgroundColor3=Color3.fromRGB(48,26,36)
+    Instance.new("UICorner",track).CornerRadius=UDim.new(1,0)
+    loading.fill=Instance.new("Frame",track)
+    loading.fill.Size=UDim2.fromScale(0,1); loading.fill.BorderSizePixel=0
+    loading.fill.BackgroundColor3=Color3.fromRGB(240,30,55)
+    Instance.new("UICorner",loading.fill).CornerRadius=UDim.new(1,0)
+    loading.percent=label("0%",158,24,12,Color3.fromRGB(170,155,163))
+    function loading.step(value,message)
+        if not gui.Parent then error("Carregamento substituido ou encerrado",0) end
+        loading.status.Text=message; loading.percent.Text=tostring(value).."%"
+        loading.fill.Size=UDim2.fromScale(value/100,1)
+        task.wait() -- Permite desenhar a etapa; nao simula downloads.
+    end
+    function loading.fail()
+        if not gui.Parent then return end
+        loading.status.Text="Falha ao iniciar. Consulte o console."
+        loading.percent.Text=""
+        local close=Instance.new("TextButton",card)
+        close.Size=UDim2.fromOffset(90,26); close.Position=UDim2.new(1,-114,0,164)
+        close.Text="Fechar"; close.Font=Enum.Font.GothamMedium; close.TextSize=12
+        close.TextColor3=Color3.fromRGB(255,255,255); close.BackgroundColor3=Color3.fromRGB(150,25,45)
+        Instance.new("UICorner",close).CornerRadius=UDim.new(0,6)
+        close.Activated:Connect(function() gui:Destroy() end)
+    end
+end
+local loaded, loadError=xpcall(function()
+loading.step(5,"Iniciando servicos...")
 -- loadstring(game:HttpGet("https://raw.githubusercontent.com/Pudimlinoo/PudimHub/main/script.lua"))()
 
 local Players = game:GetService("Players")
@@ -167,6 +229,9 @@ function HUD.connect(signal, callback)
 end
 -- ================= GUI =================
 local gui = Instance.new("ScreenGui", player.PlayerGui)
+gui.Enabled=false
+loading.main=gui
+loading.step(15,"Preparando controles...")
 gui.Name = NOME_DO_HUB -- <--- AQUI: Usa o nome único definido lá em cima
 gui.ResetOnSpawn = false
 HUD.travelActive = false
@@ -579,6 +644,7 @@ gui.Destroying:Connect(function()
     table.clear(HUD.connections)
 end)
 
+loading.step(30,"Montando interface...")
 local frame = Instance.new("Frame", gui)
 frame.Size = UDim2.new(0,460,0,520)
 frame.Position = UDim2.new(0.03,0,0.35,0)
@@ -3540,6 +3606,7 @@ do
 end
 
 
+loading.step(55,"Preparando farm de baus...")
 -- MODULE BEGIN: chest_farm.lua
 do
 (function()
@@ -5999,6 +6066,7 @@ end)()({HUD=HUD,gui=gui,player=player,Players=Players,RunService=RunService,Twee
 end
 -- MODULE END: chest_farm.lua
 
+loading.step(70,"Preparando frutas...")
 -- MODULE BEGIN: fruit_storage.lua
 do
 (function()
@@ -6252,6 +6320,7 @@ end
 -- MODULE END: fruit_rows.lua
 
 
+loading.step(85,"Montando lista e controles de frutas...")
 -- MODULE BEGIN: fruits.lua
 do
 (function()
@@ -6655,6 +6724,7 @@ do
         HUD.connect(item.Activated,callback)
         return item
     end
+loading.step(95,"Finalizando ajustes...")
     criarSecao("PUDIMHUB / V033",0,tabSistema)
     local activity=label(tabSistema,"Pronto",40)
     local diagnostics=label(tabSistema,HUD.errorText,70)
@@ -6961,4 +7031,15 @@ do
         filter.Text=""; updatePriority(); HUD.resetCombatExtras()
     end
     HUD.connect(player.CharacterRemoving,function() HUD.resetCombatExtras() end)
+end
+loading.step(100,"Pronto!")
+if loading.gui.Parent and gui.Parent and HUD.alive then
+    gui.Enabled=true
+    loading.gui:Destroy()
+end
+end,debug.traceback)
+if not loaded then
+    if loading.main and loading.main.Parent then loading.main:Destroy() end
+    warn("[PudimHub / carregamento] "..tostring(loadError))
+    loading.fail()
 end
