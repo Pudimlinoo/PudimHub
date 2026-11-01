@@ -3,6 +3,13 @@ local loading = {}
 do
     local player=game:GetService("Players").LocalPlayer
     local parent=player:WaitForChild("PlayerGui")
+    local registry=_G
+    if type(getgenv)=="function" then
+        local ok,value=pcall(getgenv); if ok and type(value)=="table" then registry=value end
+    end
+    loading.sessionRegistry=registry
+    local prior=registry.PudimHubSession
+    if type(prior)=="table" and type(prior.shutdown)=="function" then pcall(prior.shutdown) end
     local previous=parent:FindFirstChild("PudimHub_Loading")
     if previous then previous:Destroy() end
     local gui=Instance.new("ScreenGui")
@@ -82,6 +89,8 @@ if CoreGui:FindFirstChild(NOME_DO_HUB) then
     CoreGui[NOME_DO_HUB]:Destroy()
 end
 
+-- Aguarda a limpeza diferida das versoes antigas, que nao tinham registro de sessao.
+game:GetService("RunService").Heartbeat:Wait()
 -- ================= SERVIÇOS =================
 local VirtualUser = game:GetService("VirtualUser")
 local Players = game:GetService("Players")
@@ -189,12 +198,13 @@ function M.activity()
     if os.clock() < HUD.manualHold then return "MANUAL", "Movimento manual" end
     if HUD.fruitBusy then return "FRUTA", "Buscando fruta no servidor atual" end
     if HUD.chestBusy then return "BAU", "Bau Farm ativo" end
+    if HUD.raidBusy then return "RAID", "Raid em andamento" end
     if HUD.farmPaused then return "PAUSA", "Farm pausado; use Retomar farm" end
     return "LIVRE", "Pronto"
 end
 
 function M.collectionBlocked()
-    return HUD.travelActive or HUD.chestBusy or HUD.flying or HUD.safeActive
+    return HUD.raidBusy or HUD.travelActive or HUD.chestBusy or HUD.flying or HUD.safeActive
         or HUD.seaBusy or HUD.serverBusy or os.clock()<HUD.manualHold
 end
 function M.storageAllowed()
@@ -205,6 +215,10 @@ function M.storageAllowed()
 end
 HUD.movement=M
 HUD.activity=M.activity
+function HUD.combatMovementAllowed()
+    local activity=HUD.activity()
+    return activity=="LIVRE" or (activity=="RAID" and HUD.raidBusy)
+end
 return M
 end
 
@@ -215,7 +229,7 @@ end
 
 function HUD.connect(signal, callback)
     local connection = signal:Connect(function(...)
-        if HUD.alive then
+        if HUD.alive and HUD.initialized then
             local ok,err=pcall(callback,...)
             if not ok then
                 if HUD.stopFarmAction then pcall(HUD.stopFarmAction) end
@@ -231,6 +245,16 @@ end
 local gui = Instance.new("ScreenGui", player.PlayerGui)
 gui.Enabled=false
 loading.main=gui
+loading.currentSession={}
+loading.currentSession.shutdown=function()
+    if HUD.shutdown then HUD.shutdown()
+    else
+        HUD.alive=false
+        for _,connection in ipairs(HUD.connections) do pcall(function() connection:Disconnect() end) end
+        if gui.Parent then gui:Destroy() end
+    end
+end
+loading.sessionRegistry.PudimHubSession=loading.currentSession
 loading.step(15,"Preparando controles...")
 gui.Name = NOME_DO_HUB -- <--- AQUI: Usa o nome único definido lá em cima
 gui.ResetOnSpawn = false
@@ -401,15 +425,16 @@ do
         if not motion then return end
         local old=motion
         motion=nil
-        old.drive:Destroy(); old.attachment:Destroy()
-        old.marker:Destroy()
+        pcall(function() old.drive:Destroy() end)
+        pcall(function() old.attachment:Destroy() end)
+        pcall(function() old.marker:Destroy() end)
         if old.root.Parent then
             old.root.AssemblyLinearVelocity=Vector3.zero
             old.root.AssemblyAngularVelocity=Vector3.zero
         end
         if old.hum.Parent then
-            old.hum.AutoRotate=old.rotate
-            old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated)
+            pcall(function() old.hum.AutoRotate=old.rotate end)
+            pcall(function() old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated) end)
         end
         if not HUD.manualNoclip then
             for part,original in pairs(HUD.collisions) do
@@ -499,13 +524,13 @@ do
             local hum=held.target and held.target:FindFirstChildOfClass("Humanoid")
             if not root or not hum or hum.Health<=0 or held.tool.Parent~=player.Character
                 or HUD.bodyDistance(held.target,root.Position)>HUD.attackRange(held.tool)
-                or UserInputService:GetFocusedTextBox() or HUD.activity()~="LIVRE" then
+                or UserInputService:GetFocusedTextBox() or not HUD.combatMovementAllowed() then
                 HUD.releaseAttack()
             end
         end
         if not motion then return end
         if not HUD.alive or player.Character~=motion.char or not motion.root.Parent
-            or motion.hum.Health<=0 or HUD.activity()~="LIVRE"
+            or motion.hum.Health<=0 or not HUD.combatMovementAllowed()
             or UserInputService:GetFocusedTextBox() or os.clock()-motion.updated>0.3 then
             HUD.stopFarmAction(); return
         end
@@ -545,7 +570,7 @@ do
             HUD.releaseAttack(); return "Aguardando "..HUD.attackCategory.." na mochila."
         end
         if not hum or hum.Health<=0 then HUD.releaseAttack(); return "Alvo indisponivel." end
-        if UserInputService:GetFocusedTextBox() or HUD.activity()~="LIVRE" then
+        if UserInputService:GetFocusedTextBox() or not HUD.combatMovementAllowed() then
             HUD.releaseAttack(); return "Autoclick pausado."
         end
         local distance=HUD.bodyDistance(npc,root.Position)
@@ -634,6 +659,12 @@ end
 end)()({HUD=HUD,player=player,VirtualUser=VirtualUser,RunService=RunService,UserInputService=UserInputService,gui=gui})
 end
 -- MODULE END: farm_combat.lua
+
+function HUD.restorePassiveToggle(key)
+    return key:sub(1,4)=="ESP/" or key=="PLAYER/Soru"
+        or key=="Frutas/ESP frutas" or key=="Frutas/Ocultar fruta equipada no ESP"
+        or key=="PLAYER/Rastro do dash" or key=="PLAYER/Manter impulso entre saltos"
+end
 
 HUD.manualHold = 0
 HUD.seaBusy = false
@@ -725,7 +756,7 @@ local subtitle = Instance.new("TextLabel", frame)
 subtitle.BackgroundTransparency = 1
 subtitle.Position = UDim2.new(1, -150, 0, 20)
 subtitle.Size = UDim2.fromOffset(130, 24)
-subtitle.Text = "V033  /  BLOX FRUITS"
+subtitle.Text = "V8  /  BLOX FRUITS"
 subtitle.Font = Enum.Font.GothamMedium
 subtitle.TextSize = 11
 subtitle.TextColor3 = Color3.fromRGB(156, 161, 177)
@@ -840,6 +871,7 @@ local tabOverview = createTab("INÍCIO")
 local tabPlayer = createTab("PLAYER")
 local tabFarm = createTab("Auto-Farm")
 HUD.tabBau = createTab("Bau Farm")
+HUD.tabRaid = createTab("Raid")
 local tabESP = createTab("ESP")
 HUD.tabFrutas = createTab("Frutas")
 local tabTeleport = createTab("TELEPORT")
@@ -1323,7 +1355,7 @@ end
 do
     local nextCursorUpdate=0
     HUD.connect(RunService.Heartbeat,function()
-        if not HUD.groupAtCursor or os.clock()<nextCursorUpdate then return end
+        if HUD.raidBusy or not HUD.groupAtCursor or os.clock()<nextCursorUpdate then return end
         nextCursorUpdate=os.clock()+0.05
         local char=player.Character
         local root=char and char:FindFirstChild("HumanoidRootPart")
@@ -1780,7 +1812,7 @@ local function CancelTeleport(message)
     currentTween = nil
     HUD.travelActive = false
     travelRoot, travelHumanoid = nil, nil
-    if oldTween then oldTween:Cancel() end
+    if oldTween then pcall(function() oldTween:Cancel() end) end
     if message then travelStatus.Text = message end
 end
 -- Cancelamento sempre acessivel, mesmo com a lista de ilhas rolada.
@@ -2452,8 +2484,10 @@ HUD.connect(RunService.RenderStepped, function(dt)
 -- ================= AUTO FARM =================
 local now=os.clock()
 HUD.safeActive=emFuga
-local farmCanMove=autoFarmEnabled and not HUD.groupAtCursor and HUD.activity()=="LIVRE" and not UserInputService:GetFocusedTextBox()
-if farmCanMove then
+local farmCanMove=autoFarmEnabled and not HUD.raidBusy and not HUD.groupAtCursor and HUD.activity()=="LIVRE" and not UserInputService:GetFocusedTextBox()
+if HUD.raidBusy then
+    -- A aba Raid atualiza o motor compartilhado.
+elseif farmCanMove then
     if not HUD.validFarmTarget(farmTarget,root,now,HUD.farmRadius) then
         HUD.stopFarmAction(); 
         farmTarget=nil; HUD.progress=nil; HUD.approach=nil
@@ -2527,12 +2561,12 @@ else
     elseif not HUD.autoNear and not HUD.groupAtCursor then HUD.setText(HUD.farmStatus,"Auto farm desligado.") end
 end
 
-    if not HUD.fruitBusy and not HUD.chestBusy and tpSpeed > 0 and hum.MoveDirection.Magnitude > 0 and not HUD.travelActive and not HUD.seaBusy and not HUD.flying and not farmCanMove and not emFuga and now >= HUD.manualHold then
+    if not HUD.raidBusy and not HUD.bhopActive and not HUD.fruitBusy and not HUD.chestBusy and tpSpeed > 0 and hum.MoveDirection.Magnitude > 0 and not HUD.travelActive and not HUD.seaBusy and not HUD.flying and not farmCanMove and not emFuga and now >= HUD.manualHold then
         root.CFrame += hum.MoveDirection * tpSpeed * math.min(dt, 0.05) * 60
     end
 
 
-	if noclip or HUD.farmMotion or HUD.fruitBusy then
+	if noclip or HUD.farmMotion or HUD.fruitMoving then
 		for _,v in ipairs(char:GetDescendants()) do
 			if v:IsA("BasePart") then
 				if HUD.collisions[v] == nil then HUD.collisions[v] = v.CanCollide end
@@ -2541,7 +2575,7 @@ end
 		end
 	end
 
-	if not noclip and not HUD.farmMotion and not HUD.fruitBusy then
+	if not noclip and not HUD.farmMotion and not HUD.fruitMoving then
         for part, collision in pairs(HUD.collisions) do
             if part.Parent then part.CanCollide = collision end
             HUD.collisions[part] = nil
@@ -3052,7 +3086,7 @@ do
         local root=char and char:FindFirstChild("HumanoidRootPart")
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         if not root or not hum or hum.Health<=0 then status("Personagem indisponivel"); return end
-        if HUD.seaBusy or HUD.serverBusy or HUD.chestBusy or HUD.safeActive then
+        if HUD.raidBusy or HUD.seaBusy or HUD.serverBusy or HUD.chestBusy or HUD.safeActive then
             status("Outra atividade controla o movimento"); return
         end
         if root.Anchored or hum.Sit or hum.SeatPart then status("Personagem preso ou sentado"); return end
@@ -3111,6 +3145,766 @@ do
     end)
     HUD.connect(player.CharacterRemoving,clearEffects)
     gui.Destroying:Connect(function() enabled=false; clearEffects(); effects:Destroy() end)
+end
+
+-- Q + Espaco ao andar: comandos nativos, sem alterar velocidade/CFrame.
+do
+    local enabled,focused=false,true
+    local interval,delayMs=0.65,0
+    local cycle,nextTry,pauseUntil=nil,0,0
+    local mode="Auto"
+    local keepSpeed=false
+    local momentum,momentumAt=0,0
+    local skillHeld={}
+    local vim
+    pcall(function() vim=game:GetService("VirtualInputManager") end)
+    local keys={}
+    local codes={Q=0x51,Space=0x20}
+    local function status(value) HUD.bhopStatus=value end
+    local function release(name)
+        local backend=keys[name]
+        if not backend then return end
+        local ok
+        if backend=="Teclas" then ok=pcall(function() keyrelease(codes[name]) end)
+        else ok=pcall(function() vim:SendKeyEvent(false,Enum.KeyCode[name],false,game) end) end
+        if ok then keys[name]=nil end
+    end
+    local function clear(preserve)
+        release("Q"); release("Space")
+        cycle=nil; HUD.bhopActive=false
+        if preserve~=true then momentum=0 end
+    end
+    local function pressWith(name,backend)
+        keys[name]=backend
+        local ok,err
+        if backend=="Teclas" then ok,err=pcall(function() keypress(codes[name]) end)
+        else ok,err=pcall(function() vim:SendKeyEvent(true,Enum.KeyCode[name],false,game) end) end
+        if not ok then
+            release(name)
+            -- Chamada de pressionamento recusada: permite tentar o outro backend.
+            keys[name]=nil
+        end
+        return ok,err
+    end
+    local function press(name)
+        local errorText="Entrada de teclado indisponivel"
+        if mode~="Teclas" and vim then
+            local ok,err=pressWith(name,"VirtualInput")
+            if ok then return true end
+            errorText=tostring(err)
+        end
+        if keys[name] then return false,"Nao foi possivel soltar a tecla anterior" end
+        if mode~="VirtualInput" and type(keypress)=="function" and type(keyrelease)=="function" then
+            local ok,err=pressWith(name,"Teclas")
+            if ok then return true end
+            errorText=tostring(err)
+        end
+        return false,errorText
+    end
+    local function fail(err)
+        clear(); enabled=false
+        status("Entrada bloqueada; veja Sistema")
+        HUD.report("Bunny Hop / teclado",tostring(err):sub(1,180))
+    end
+    criarSecao("BUNNY HOP / DASH + PULO",0,tabPlayer)
+    criarBotaoToggle("Bunny Hop automatico / WASD",0,tabPlayer,function(value)
+        clear(); enabled=value; nextTry=0
+        status(value and "Ande com W/A/S/D" or "Desligado")
+    end)
+    local hopControl=HUD.toggles[#HUD.toggles]
+    function HUD.stopBhop()
+        enabled=false; clear(); table.clear(skillHeld)
+        if hopControl then hopControl.set(false,true) end
+        for _,name in ipairs({"Q","Space"}) do
+            if vim then pcall(function() vim:SendKeyEvent(false,Enum.KeyCode[name],false,game) end) end
+            if type(keyrelease)=="function" then pcall(keyrelease,codes[name]) end
+        end
+        status("Bunny Hop parado; teclas liberadas")
+    end
+    criarBotaoToggle("Manter impulso entre saltos",0,tabPlayer,function(value) keepSpeed=value; if not value then momentum=0 end end)
+    HUD.toggles[#HUD.toggles].set(true,true)
+    criarSlider("Intervalo entre combos (ms)",350,1500,650,0,tabPlayer,function(value) interval=value/1000 end)
+    criarSlider("Atraso do pulo apos dash (ms)",0,150,0,0,tabPlayer,function(value) delayMs=value end)
+    local backend=Instance.new("TextButton",tabPlayer)
+    backend.Size=UDim2.new(1,0,0,38); backend.BackgroundColor3=Theme.Button
+    backend.TextColor3=Theme.Text; backend.Font=Enum.Font.GothamMedium; backend.TextSize=12
+    backend.Text="Entrada do dash: Auto"; roundUI(backend,8)
+    HUD.connect(backend.Activated,function()
+        clear(); mode=mode=="Auto" and "Teclas" or mode=="Teclas" and "VirtualInput" or "Auto"
+        backend.Text="Entrada do dash: "..mode; status("Entrada selecionada: "..mode)
+    end)
+    local function moving()
+        return UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.A)
+            or UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.D)
+    end
+    HUD.connect(UserInputService.TextBoxFocused,clear)
+    HUD.connect(UserInputService.WindowFocusReleased,function() focused=false; table.clear(skillHeld); clear() end)
+    HUD.connect(UserInputService.WindowFocused,function() focused=true end)
+    HUD.connect(UserInputService.InputBegan,function(input)
+        if input.KeyCode==Enum.KeyCode.R then pauseUntil=os.clock()+0.9; clear() end
+        local key=tostring(input.KeyCode):match("([^%.]+)$")
+        if key=="Z" or key=="X" or key=="C" or key=="V" or key=="F" then skillHeld[key]=true; clear() end
+    end)
+    HUD.connect(UserInputService.InputEnded,function(input)
+        local key=tostring(input.KeyCode):match("([^%.]+)$")
+        if skillHeld[key] then skillHeld[key]=nil; pauseUntil=os.clock()+0.5 end
+    end)
+    HUD.connect(player.CharacterRemoving,function() table.clear(skillHeld); clear(); nextTry=os.clock()+1 end)
+    gui.Destroying:Connect(function() enabled=false; clear() end)
+    local function step()
+        local now=os.clock()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if not enabled or not HUD.alive or not focused or UserInputService:GetFocusedTextBox()
+            or not moving() or not root or not hum or hum.Health<=0 or root.Anchored
+            or hum.Sit or hum.SeatPart or hum.PlatformStand or next(skillHeld)~=nil or autoFarmEnabled or HUD.farmMotion
+            or HUD.fruitBusy or HUD.chestBusy or HUD.flying or HUD.travelActive or HUD.safeActive
+            or HUD.raidBusy or emFuga or HUD.seaBusy or HUD.serverBusy or now<HUD.manualHold or now<pauseUntil then
+            clear(); return
+        end
+        local state=hum:GetState()
+        if state==Enum.HumanoidStateType.Swimming or state==Enum.HumanoidStateType.Climbing
+            or state==Enum.HumanoidStateType.Physics or state==Enum.HumanoidStateType.FallingDown
+            or state==Enum.HumanoidStateType.Ragdoll then clear(); return end
+        local grounded=hum.FloorMaterial~=Enum.Material.Air and hum.FloorMaterial~=Enum.Material.Water
+        if keepSpeed then
+            local velocity=root.AssemblyLinearVelocity
+            local flat=Vector3.new(velocity.X,0,velocity.Z)
+            if cycle and flat.Magnitude>math.max(hum.WalkSpeed+8,momentum+1) then
+                momentum=math.min(flat.Magnitude,140); momentumAt=now
+            end
+            local direction=Vector3.new(hum.MoveDirection.X,0,hum.MoveDirection.Z)
+            if momentum>0 and now-momentumAt<1.5 and direction.Magnitude>0.1 then
+                direction=direction.Unit
+                local params=RaycastParams.new()
+                params.FilterType=Enum.RaycastFilterType.Exclude; params.FilterDescendantsInstances={char}
+                params.RespectCanCollide=true
+                local obstacle=workspace:Raycast(root.Position,direction*math.max(4,momentum*0.08),params)
+                if obstacle and obstacle.Normal.Y<0.6 then momentum=0
+                elseif flat.Magnitude<momentum then
+                    root.AssemblyLinearVelocity=Vector3.new(direction.X*momentum,velocity.Y,direction.Z*momentum)
+                end
+            end
+        end
+        if cycle then
+            if cycle.char~=char then clear(); return end
+            HUD.bhopActive=true
+            if not cycle.jumped and now>=cycle.jumpAt then
+                -- Nao dispara um salto atrasado se ja caiu de uma borda.
+                if not grounded then clear(); nextTry=now+interval; return end
+                local ok,err=press("Space")
+                if not ok then fail(err); return end
+                cycle.jumped=true; cycle.releaseAt=now+0.065
+                status("Q + Espaco enviados; aguardando aterrissagem")
+            end
+            if cycle.jumped and now>=cycle.releaseAt then release("Q"); release("Space") end
+            if cycle.jumped and (not grounded or root.AssemblyLinearVelocity.Y>3) then cycle.air=true end
+            if cycle.air and grounded and root.AssemblyLinearVelocity.Y<=2 and now-cycle.started>0.18 then
+                clear(true); status("Aterrissou; preparando proximo combo")
+            elseif now-cycle.started>1.2 and not cycle.air then
+                clear(); nextTry=now+interval
+                status("Sem salto observado; tente outra Entrada do dash")
+            elseif now-cycle.started>6 then clear() end
+            return
+        end
+        if keys.Q or keys.Space then clear(); return end
+        if not grounded or root.AssemblyLinearVelocity.Y>2 or now<nextTry then return end
+        -- Comandos manuais tem prioridade; nunca sintetiza W/A/S/D.
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) or UserInputService:IsKeyDown(Enum.KeyCode.Space) then return end
+        if not hum:GetStateEnabled(Enum.HumanoidStateType.Jumping) then status("Pulo bloqueado pelo personagem"); return end
+        local ok,err=press("Q")
+        if not ok then fail(err); return end
+        cycle={char=char,started=now,jumpAt=now+delayMs/1000,jumped=false,air=false}
+        nextTry=now+interval; HUD.bhopActive=true
+        if delayMs==0 then
+            local jumpOK,jumpError=press("Space")
+            if not jumpOK then fail(jumpError); return end
+            cycle.jumped=true; cycle.releaseAt=now+0.065
+        end
+        status("Tentando dash + pulo / "..mode)
+    end
+    HUD.connect(RunService.Heartbeat,function()
+        local ok,err=pcall(step)
+        if not ok then fail(err) end
+    end)
+end
+
+-- Raid: referencias examinadas em Pesquisa_AutoRaid_v8.md. Nenhum hub externo e executado.
+do
+    local R={autoRun=false,autoBuy=false,navigate=false,fight=false,autoStart=false,selected="Flame",types={"Flame","Ice","Sand","Dark","Light","Magma","Quake","Buddha","Spider","Rumble","Dough","Phoenix"},speed=200,gap=2,radius=700,alive=true}
+    HUD.raid=R
+    R.selectedSea=2
+    local seaButtons={}
+    local page=HUD.tabRaid
+    local message,summary,selection
+    local messageUntil=0
+    local target,goal,progress,wasActive,startedAt,initialFragments
+    local ignored=setmetatable({}, {__mode="k"})
+    local nextScan,nextStart,nextCommand=0,0,0
+    local observedIslands={}
+    local commandBusy=false
+    local commandGeneration=0
+    local startPending
+    local nextBuy,lastTimerAt,startFailures=0,nil,0
+    local skillKeys={}
+    local controls={}
+    local oldSpeed
+    local function say(text,important)
+        if not important and os.clock()<messageUntil then return end
+        if important then messageUntil=os.clock()+10 end
+        R.message=text; if message then HUD.setText(message,text) end
+    end
+    local function label(height)
+        local x=Instance.new("TextLabel",page)
+        x.Size=UDim2.new(1,0,0,height); x.BackgroundTransparency=1
+        x.TextColor3=Theme.Text; x.Font=Enum.Font.Gotham; x.TextSize=12
+        x.TextWrapped=true; x.TextXAlignment=Enum.TextXAlignment.Left
+        return x
+    end
+    local function button(text,fn)
+        local x=Instance.new("TextButton",page)
+        x.Size=UDim2.new(1,0,0,38); x.BackgroundColor3=Theme.Button
+        x.TextColor3=Theme.Text; x.Font=Enum.Font.GothamMedium; x.TextSize=12; x.Text=text
+        roundUI(x,8); HUD.connect(x.Activated,fn); return x
+    end
+    function R.sea()
+        return R.selectedSea
+    end
+    function R.currentSea()
+        return game.PlaceId==4442272183 and 2 or game.PlaceId==7449423635 and 3
+            or game.PlaceId==2753915549 and 1 or nil
+    end
+    function R.seaMatches()
+        local current=R.currentSea()
+        return current==nil or current==R.selectedSea
+    end
+    function R.value(name)
+        local data=player:FindFirstChild("Data"); local v=data and data:FindFirstChild(name)
+        return v and tonumber(v.Value) or 0
+    end
+    function R.timer()
+        local pg=player:FindFirstChild("PlayerGui")
+        local main=pg and pg:FindFirstChild("Main")
+        if not main then return false,"--" end
+        local top=main:FindFirstChild("TopHUDList")
+        local candidates={}
+        if top and top:FindFirstChild("RaidTimer") then table.insert(candidates,top:FindFirstChild("RaidTimer")) end
+        local legacy=main:FindFirstChild("Timer")
+        if legacy then table.insert(candidates,legacy) end
+        for _,timer in ipairs(candidates) do
+            local visible=timer:IsA("GuiObject") and timer.Visible
+            local ancestor=timer.Parent
+            while visible and ancestor and ancestor~=pg do
+                if ancestor:IsA("GuiObject") and not ancestor.Visible then visible=false end
+                ancestor=ancestor.Parent
+            end
+            if visible then
+                local text=timer:IsA("TextLabel") and timer or timer:FindFirstChildWhichIsA("TextLabel",true)
+                return true,text and text.Text or "Ativo"
+            end
+        end
+        return false,"--"
+    end
+    function R.chip()
+        for _,container in pairs({player:FindFirstChild("Backpack"),player.Character}) do
+            if container then
+                local chip=container:FindFirstChild("Special Microchip") or container:FindFirstChild("Advanced Microchip")
+                if chip and chip:IsA("Tool") then return chip end
+            end
+        end
+    end
+    function R.physicalFruit()
+        for _,container in pairs({player.Character}) do
+            if container then
+                for _,tool in ipairs(container:GetChildren()) do
+                    if tool:IsA("Tool") and tool:FindFirstChild("Handle") and tool.Name:match(" Fruit$") then return true end
+                end
+            end
+        end
+        return false
+    end
+    function R.islands(root)
+        local origin=workspace:FindFirstChild("_WorldOrigin")
+        local locations=origin and origin:FindFirstChild("Locations")
+        local result={}
+        for _,part in ipairs(locations and locations:GetChildren() or {}) do
+            local number=tonumber(part.Name:match("^Island ([1-5])$"))
+            if number and part:IsA("BasePart") and (part.Position-root.Position).Magnitude<4500 then
+                table.insert(result,{number=number,part=part})
+            end
+        end
+        table.sort(result,function(a,b)
+            if a.number==b.number then return (a.part.Position-root.Position).Magnitude<(b.part.Position-root.Position).Magnitude end
+            return a.number>b.number
+        end)
+        return result
+    end
+    function R.summon()
+        local map=workspace:FindFirstChild("Map")
+        local island=map and map:FindFirstChild(R.sea()==2 and "CircleIsland" or "Boat Castle")
+        local summon=island and island:FindFirstChild("RaidSummon2")
+        local buttonPart=summon and summon:FindFirstChild("Button")
+        local mainPart=buttonPart and buttonPart:FindFirstChild("Main")
+        local detector=mainPart and mainPart:FindFirstChildOfClass("ClickDetector")
+            or summon and summon:FindFirstChildWhichIsA("ClickDetector",true)
+        local part=detector and detector:FindFirstAncestorWhichIsA("BasePart")
+        return detector,part
+    end
+    local function releaseMotion()
+        local owned=HUD.raidBusy
+        HUD.raidBusy=false
+        if owned then
+            local ok,err=pcall(HUD.stopFarmAction)
+            if not ok then HUD.report("Liberar Raid",err) end
+        end
+        if oldSpeed then HUD.farmSpeed=oldSpeed; oldSpeed=nil end
+        progress=nil
+    end
+    function R.stop(reason)
+        R.navigate=false; R.fight=false; R.autoStart=false; R.autoRun=false; R.autoBuy=false
+        R.state="PARADA"; R.targetName=nil; R.damage=nil; lastTimerAt=nil; startFailures=0
+        target=nil; goal=nil; startPending=nil; commandGeneration+=1
+        table.clear(skillKeys); wasActive=false; observedIslands={}
+        releaseMotion()
+        for _,control in ipairs(controls) do control.set(false,true) end
+        say(reason or "Raid parada.")
+    end
+    function R.setSea(sea)
+        if sea~=2 and sea~=3 then return end
+        if sea~=R.selectedSea then R.stop(); observedIslands={}; nextScan=0 end
+        R.selectedSea=sea
+        if summary then summary.Text="Raid em espera / Sea "..sea end
+        for index,item in pairs(seaButtons) do
+            item.Text="Sea "..index..(index==sea and " / Selecionado" or "")
+            item.BackgroundColor3=index==sea and Theme.DarkRed or Theme.Button
+        end
+        say("Raid configurada para o Sea "..sea..".",true)
+    end
+    local function otherActivity()
+        return HUD.safeActive or emFuga or HUD.flying or HUD.travelActive or HUD.fruitBusy
+            or HUD.chestBusy or HUD.seaBusy or HUD.serverBusy or os.clock()<HUD.manualHold
+            or next(skillKeys)~=nil or HUD.farmPaused or UserInputService:GetFocusedTextBox()
+    end
+    local function claim()
+        if otherActivity() then releaseMotion(); return false end
+        if not HUD.raidBusy then
+            HUD.stopFarmAction(); oldSpeed=HUD.farmSpeed; HUD.raidBusy=true
+        end
+        HUD.farmSpeed=R.speed
+        return true
+    end
+    local function command(fn)
+        if commandBusy or os.clock()<nextCommand then say("Aguarde a solicitacao anterior.",true); return end
+        commandBusy=true; nextCommand=os.clock()+3
+        local generation=commandGeneration
+        HUD.startJob(function()
+            local ok,err=pcall(function()
+                if not R.alive or generation~=commandGeneration then return end
+                fn(function() return R.alive and HUD.alive and generation==commandGeneration end)
+            end)
+            commandBusy=false
+            if not ok and R.alive and generation==commandGeneration then say("Falha: "..tostring(err):sub(1,160),true) end
+        end)
+    end
+    function R.buy()
+        local selected=R.selected
+        say("Comprando chip de "..selected.."...",true)
+        command(function(valid)
+            if not R.seaMatches() then say("Voce esta no Sea "..R.currentSea()..". Selecione o Sea correspondente na aba Raid.",true); return end
+            if R.timer() then say("Aguarde a raid terminar.",true); return end
+            if R.chip() then say("Voce ja tem um chip. Use-o antes de comprar outro.",true); return end
+            if R.value("Level")<1100 then say("Nivel insuficiente para hospedar: 1100.",true); return end
+            if R.physicalFruit() then say("Desequipe a fruta fisica da mao antes de comprar o chip.",true); return end
+            local result=HUD.remote("RaidsNpc","Select",selected)
+            if not valid() then return end
+            local deadline=os.clock()+5
+            repeat task.wait(0.1) until not valid() or R.chip() or os.clock()>=deadline
+            if not valid() then return end
+            if R.chip() then
+                say("Chip detectado apos a compra de "..selected..".",true)
+            else
+                local response=tostring(result)
+                if type(result)=="table" then
+                    local ok,json=pcall(function() return game:GetService("HttpService"):JSONEncode(result) end)
+                    if ok then response=json end
+                end
+                say("Chip de "..selected.." nao confirmado. Servidor: "..response:sub(1,100)..". Confira saldo, cooldown e requisitos.",true)
+            end
+        end)
+    end
+    function R.labPoint()
+        local _,part=R.summon()
+        if part then return part.Position+Vector3.new(0,3,4),part end
+        -- Pontos conhecidos das fontes publicas; nao altera spawn nem requisita portais.
+        return R.sea()==2 and Vector3.new(-6438,251,-4501) or Vector3.new(-5017,315,-2823)
+    end
+    function R.start()
+        if startPending then say("Inicio ja solicitado; aguardando confirmacao.",true); return end
+        if os.clock()<nextStart then say("Aguarde "..math.ceil(nextStart-os.clock()).."s para tentar iniciar novamente.",true); return end
+        if not R.seaMatches() or R.timer() then say("Selecione o Sea atual; inicio indisponivel se ja existe raid ativa.",true); return end
+        if not R.chip() then say("Sem chip de raid; compre um ou entre na raid de outro jogador.",true); return end
+        if otherActivity() then say("Aguarde a outra atividade antes de iniciar.",true); return end
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local detector,part=R.summon()
+        if not root then say("Aguardando personagem.",true); return end
+        nextStart=os.clock()+5
+        if not part then
+            local point=R.labPoint()
+            if (root.Position-point).Magnitude>15 then
+                goal={point=point,lab=true,startAfter=true}
+                say("Indo ao laboratorio para carregar o botao.",true)
+            else say("Botao ainda nao carregado. Aguarde ou inicie pela capsula do jogo.",true) end
+            return
+        end
+        if HUD.stopBhop then HUD.stopBhop() end
+        target=nil; goal=nil; releaseMotion(); HUD.releaseAttack()
+        if (root.Position-part.Position).Magnitude>math.max(3,math.min(12,detector.MaxActivationDistance-1)) then
+            goal={part=part,point=part.Position+Vector3.new(0,3,4),lab=true,startAfter=true}
+            say("Indo ao botao; a raid sera solicitada depois da chegada.",true); return
+        end
+        if type(fireclickdetector)~="function" then say("Clique no botao de raid do jogo; este executor nao oferece fireclickdetector.",true); return end
+        local ok,err=pcall(fireclickdetector,detector)
+        nextStart=os.clock()+12
+        if ok then startPending={at=os.clock(),char=player.Character} end
+        say(ok and "Inicio solicitado; aguardando temporizador do jogo." or "Inicio falhou: "..tostring(err),true)
+    end
+    function R.enemy(npc,island)
+        if not npc:IsA("Model") or Players:GetPlayerFromCharacter(npc) or npc:FindFirstChildOfClass("ForceField") then return end
+        local hp=npc:FindFirstChildOfClass("Humanoid")
+        local part=npc:FindFirstChild("HumanoidRootPart")
+        if hp and hp.Health>0 and part and part:IsA("BasePart")
+            then
+            local delta=part.Position-island.Position
+            if math.sqrt(delta.X*delta.X+delta.Z*delta.Z)<=R.radius and math.abs(delta.Y)<=400 then return hp,part end
+        end
+    end
+    local function move(char,root,hum,point,face,body)
+        if not claim() then return false end
+        local distance=(point-root.Position).Magnitude
+        local now=os.clock()
+        if not progress or progress.id~=(body or goal or point) then progress={id=body or goal or point,best=distance,at=now} end
+        if distance<progress.best-2 then progress.best=distance; progress.at=now end
+        if distance>10 and now-progress.at>12 then
+            if target then ignored[target]=now+10; target=nil end
+            goal=nil; releaseMotion(); say("Trajeto sem progresso; movimento cancelado para reavaliar."); return false
+        end
+        -- O alvo serve para medir progresso; sem exigir orientacao traseira para liberar M1.
+        HUD.driveFarm(char,root,hum,point,face,nil,nil,nil)
+        return true
+    end
+    criarSecao("RAID",0,page)
+    for _,sea in ipairs({2,3}) do
+        seaButtons[sea]=button("Sea "..sea..(sea==2 and " / Selecionado" or ""),function() R.setSea(sea) end)
+        seaButtons[sea].BackgroundColor3=sea==2 and Theme.DarkRed or Theme.Button
+    end
+    summary=label(48); summary.Text="Raid em espera / Sea 2"
+    message=label(48); say("Pronto. Selecione a raid e as funcoes desejadas.")
+    local picker,buyButton
+    R.advanced={Dough=true,Phoenix=true}
+    selection=button("Raid: Flame  /  escolher",function() picker.Visible=not picker.Visible end)
+    picker=Instance.new("Frame",page)
+    picker.Size=UDim2.new(1,0,0,244); picker.BackgroundColor3=Theme.Second
+    picker.Visible=false; picker.ClipsDescendants=true; roundUI(picker,8)
+    local search=Instance.new("TextBox",picker)
+    search.Size=UDim2.new(1,-16,0,32); search.Position=UDim2.new(0,8,0,8)
+    search.BackgroundColor3=Theme.Button; search.TextColor3=Theme.Text
+    search.Font=Enum.Font.Gotham; search.TextSize=12; search.Text=""
+    search.PlaceholderText="Buscar raid..."; search.ClearTextOnFocus=false; roundUI(search,6)
+    local list=Instance.new("ScrollingFrame",picker)
+    list.Position=UDim2.new(0,8,0,48); list.Size=UDim2.new(1,-16,1,-56)
+    list.BackgroundTransparency=1; list.BorderSizePixel=0; list.ScrollBarThickness=4
+    list.CanvasSize=UDim2.new(); list.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    list.ScrollingDirection=Enum.ScrollingDirection.Y
+    local layout=Instance.new("UIListLayout",list)
+    layout.Padding=UDim.new(0,5); layout.SortOrder=Enum.SortOrder.LayoutOrder
+    local options={}
+    function R.select(name)
+        if not table.find(R.types,name) then return end
+        R.selected=name; selection.Text="Raid: "..name.."  /  escolher"
+        if buyButton then buyButton.Text="Comprar chip de "..name.." (gasta recursos)" end
+        picker.Visible=false
+        for optionName,item in pairs(options) do
+            item.BackgroundColor3=optionName==name and Theme.DarkRed or Theme.Button
+        end
+    end
+    local function rebuild()
+        for _,item in pairs(options) do item:Destroy() end
+        options={}
+        table.sort(R.types,function(a,b)
+            if (R.advanced[a]==true)~=(R.advanced[b]==true) then return not R.advanced[a] end
+            return a<b
+        end)
+        for index,name in ipairs(R.types) do
+            local item=Instance.new("TextButton",list)
+            item.Size=UDim2.new(1,-6,0,34); item.LayoutOrder=index
+            item.BackgroundColor3=name==R.selected and Theme.DarkRed or Theme.Button
+            item.TextColor3=Theme.Text; item.Font=Enum.Font.GothamMedium; item.TextSize=12
+            item.Text=name..(R.advanced[name] and "  /  Avancada" or "  /  Basica")
+            item.Visible=name:lower():find(search.Text:lower(),1,true)~=nil
+            roundUI(item,6); item.Activated:Connect(function() if R.alive then R.select(name) end end)
+            options[name]=item
+        end
+    end
+    HUD.connect(search:GetPropertyChangedSignal("Text"),function()
+        for name,item in pairs(options) do item.Visible=name:lower():find(search.Text:lower(),1,true)~=nil end
+    end)
+    rebuild()
+    buyButton=button("Comprar chip de Flame (gasta recursos)",R.buy)
+    -- Catalogo local: nao executa ModuleScripts do jogo ao carregar o hub.
+    button("Ir ao laboratorio carregado",function()
+        if not R.seaMatches() then say("Selecione o Sea em que voce esta antes de ir ao laboratorio.",true); return end
+        local point,part=R.labPoint()
+        if R.timer() then say("Raid ativa; laboratorio bloqueado durante o combate."); return end
+        goal={part=part,point=point,lab=true}
+        say("Indo ao botao do laboratorio.")
+    end)
+    button("Iniciar raid com meu chip",R.start)
+    button("Destravar personagem / parar controles",function()
+        R.stop("Controles da Raid interrompidos.")
+        if HUD.stopBhop then HUD.stopBhop() end
+        if HUD.stopFly then HUD.stopFly() end
+        if HUD.stopChest then HUD.stopChest("Interrompido pela recuperacao manual.") end
+        if HUD.stopFruit then HUD.stopFruit() end
+        CancelTeleport("Recuperacao manual do personagem.")
+        for _,control in ipairs(HUD.toggles) do
+            if control.key=="Auto-Farm/Auto Farm" or control.key=="Auto-Farm/Ataque perto de NPC (sem farm)"
+                or control.key=="Auto-Farm/Juntar NPCs no cursor" then control.set(false,true) end
+        end
+        HUD.stopFarmAction(); HUD.manualHold=os.clock()+2
+        say("Movimento e ataques do hub liberados. Se o jogo continuar bloqueado, renasca pelo menu do Roblox.",true)
+    end)
+    local function toggle(text,key)
+        criarBotaoToggle(text,0,page,function(value)
+            local before=R[key]
+            R[key]=value
+            if before and not value and (key=="autoRun" or key=="autoBuy") then
+                commandGeneration+=1
+                if key=="autoRun" then goal=nil; startPending=nil; R.damage=nil; table.clear(skillKeys) end
+            end
+            if value and HUD.stopBhop then HUD.stopBhop() end
+            if not value then target=nil; releaseMotion() end
+        end)
+        table.insert(controls,HUD.toggles[#HUD.toggles])
+    end
+    toggle("Auto Raid / iniciar, avancar e combater","autoRun")
+    toggle("Comprar chip automaticamente (gasta recursos)","autoBuy")
+    toggle("Iniciar automaticamente (chip existente)","autoStart")
+    criarSecao("ILHAS E COMBATE",0,page)
+    toggle("Avancar pelas ilhas","navigate")
+    toggle("Combater inimigos da raid","fight")
+    button("Ir a ilha mais avancada detectada",function()
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not root or not R.timer() then say("Nenhuma raid ativa confirmada."); return end
+        local islands=R.islands(root)
+        if not islands[1] then say("Ilhas ainda nao carregadas."); return end
+        goal={part=islands[1].part,point=islands[1].part.Position+Vector3.new(0,45,0)}
+    end)
+    button("Categoria de arma: usa selecao do Auto Farm",function()
+        local categories=HUD.attackCategories
+        local index=table.find(categories,HUD.attackCategory) or 0
+        if HUD.setAttackCategory then HUD.setAttackCategory(categories[index%#categories+1]) end
+        say("Categoria de ataque: "..HUD.attackCategory)
+    end)
+    criarSlider("Velocidade na raid",50,350,200,0,page,function(v) R.speed=v end)
+    criarSlider("Distancia atras do inimigo",1,8,2,0,page,function(v) R.gap=v end)
+    criarSlider("Raio dos inimigos na ilha",100,1000,700,0,page,function(v) R.radius=v end)
+    button("Parar todas as funcoes de Raid",function() R.stop() end)
+    criarSecao("DESPERTAR",0,page)
+    button("Consultar despertar disponivel",function()
+        command(function(valid)
+            local result=HUD.remote("Awakener","Check")
+            if valid() then say("Despertar / resposta: "..tostring(result):sub(1,130)) end
+        end)
+    end)
+    button("Despertar habilidade (gasta fragmentos)",function()
+        if R.timer() then say("Termine a raid antes de solicitar despertar."); return end
+        command(function(valid)
+            local before=R.value("Fragments")
+            local result=HUD.remote("Awakener","Awaken")
+            if valid() then say("Despertar solicitado: "..tostring(result):sub(1,80).." | Fragmentos: "..before.." -> "..R.value("Fragments")) end
+        end)
+    end)
+    function R.hasWork()
+        return R.autoRun or R.autoBuy or R.navigate or R.fight or R.autoStart or goal~=nil or startPending~=nil or HUD.raidBusy==true
+    end
+    function R.tick()
+        if not R.alive or not R.hasWork() then return end
+        local now=os.clock()
+        local active,timerText=R.timer()
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum or hum.Health<=0 then
+            R.stop("Personagem indisponivel; reative a Raid depois de renascer."); return
+        end
+        if not R.seaMatches() then
+            releaseMotion(); R.state="SEA INCORRETO"
+            say("Selecione o Sea atual antes de iniciar a Raid."); return
+        end
+        if active then
+            lastTimerAt=now
+            if not wasActive then
+                startedAt=now; initialFragments=R.value("Fragments")
+                target=nil; R.damage=nil; goal=nil; table.clear(ignored)
+                R.defeated=0; startFailures=0; startPending=nil; nextScan=0
+                say("Raid detectada pelo temporizador.")
+            end
+            wasActive=true
+        elseif wasActive then
+            releaseMotion()
+            if now-(lastTimerAt or now)<1.5 then R.state="CONFIRMANDO FIM"; return end
+            wasActive=false; target=nil; R.damage=nil; observedIslands={}
+            if not goal or not goal.lab then goal=nil end
+            nextStart=math.max(nextStart,now+8)
+            R.lastSession="Raid encerrada | Fragmentos: "..(R.value("Fragments")-(initialFragments or R.value("Fragments")))
+            R.state="ENCERRADA"; say(R.lastSession,true)
+        end
+        if startPending then
+            if char~=startPending.char or now-startPending.at>10 then
+                startPending=nil; releaseMotion(); startFailures+=1
+                R.state="INICIO NAO CONFIRMADO"
+                if startFailures>=3 then R.stop("Inicio nao confirmado em 3 tentativas. Confira a capsula e tente iniciar manualmente."); return end
+                say("Raid nao iniciou. Tentativa "..startFailures.."/3; confira chip e capsula.",true)
+            else
+                R.state="AGUARDANDO INICIO"; releaseMotion(); return
+            end
+        end
+        if now>=nextScan then
+            observedIslands=active and R.islands(root) or {}; nextScan=now+0.3
+        end
+        local island=observedIslands[1]
+        if island and not island.part:IsDescendantOf(workspace) then island=nil; nextScan=0 end
+        R.islandNumber=island and island.number or nil
+        HUD.setText(summary,string.format("Sea %d | %s | Chip: %s | Ilha: %s\n%s | NPCs derrotados observados: %d | %s",
+            R.sea(),timerText,R.chip() and "sim" or "nao",island and tostring(island.number).."/5" or "--",
+            R.state or "EM ESPERA",R.defeated or 0,HUD.attackCategory))
+        if otherActivity() then
+            releaseMotion(); R.state="PAUSADA"; say("Raid pausada enquanto voce usa outro controle."); return
+        end
+        if not active and not goal then
+            releaseMotion()
+            if R.chip() then
+                if (R.autoRun or R.autoStart) and now>=nextStart then R.start() end
+                if not goal and not startPending then R.state="CHIP PRONTO" end
+            elseif R.autoBuy then
+                R.state="AGUARDANDO CHIP"
+                if not commandBusy and now>=nextBuy and now>=nextCommand then
+                    nextBuy=now+60; R.buy()
+                end
+            else R.state="SEM CHIP"; say("Compre o chip selecionado ou ative Comprar chip automaticamente.") end
+        end
+        if startPending then return end
+        -- Deslocamento solicitado para o laboratorio tem prioridade sobre navegacao automatica.
+        if goal and goal.lab then
+            if goal.part and not goal.part:IsDescendantOf(workspace) then
+                goal.part=nil -- Mantem o ponto conhecido enquanto o mapa carrega.
+            end
+            R.state="INDO AO LABORATORIO"
+            if (root.Position-goal.point).Magnitude<5 then
+                local startAfter=goal.startAfter; goal=nil; releaseMotion()
+                if startAfter then nextStart=0; R.start() else say("Laboratorio alcancado.",true) end
+            else move(char,root,hum,goal.point,goal.part and goal.part.Position or goal.point) end
+            return
+        end
+        if not active then releaseMotion(); return end
+        if not island then releaseMotion(); R.state="CARREGANDO ILHAS"; say("Aguardando as ilhas da sua raid carregarem."); return end
+        if HUD.activity()~="LIVRE" and HUD.activity()~="RAID" then releaseMotion(); R.state="PAUSADA"; return end
+        local fight=R.fight or R.autoRun
+        local navigate=R.navigate or R.autoRun
+        if fight then
+            local hp,part
+            if target and target:IsDescendantOf(workspace) then
+                local previous=target:FindFirstChildOfClass("Humanoid")
+                if previous and previous.Health<=0 then R.defeated=(R.defeated or 0)+1 end
+                hp,part=R.enemy(target,island.part)
+            end
+            if not hp then
+                if target then releaseMotion() end
+                target=nil; R.damage=nil
+                local distance=math.huge
+                local folder=workspace:FindFirstChild("Enemies")
+                for _,npc in ipairs(folder and folder:GetChildren() or {}) do
+                    local h,p=R.enemy(npc,island.part)
+                    if h and (ignored[npc] or 0)<=now and (p.Position-root.Position).Magnitude<distance then
+                        target=npc; distance=(p.Position-root.Position).Magnitude; hp,part=h,p
+                    end
+                end
+            end
+            if target and hp and part then
+                goal=nil -- NPCs carregados interrompem o deslocamento ao centro da ilha.
+                if not claim() then return end
+                local tool=HUD.pickWeapon(char,hum,now)
+                if not tool then releaseMotion(); R.state="SEM ARMA"; say("Equipe ou selecione uma arma da categoria "..HUD.attackCategory.."."); return end
+                if not R.damage or R.damage.target~=target then
+                    R.damage={target=target,hp=hp.Health,at=now,recovered=false}
+                end
+                local d=R.damage
+                if hp.Health<d.hp then d.at=now; d.recovered=false end
+                d.hp=hp.Health
+                local range=HUD.attackRange(tool)
+                local bodyDistance=HUD.bodyDistance(target,root.Position)
+                if bodyDistance>range then d.at=now end
+                if now-d.at>=6 and not d.recovered then
+                    d.recovered=true; HUD.releaseAttack(); HUD.equipAt=0; HUD.farmAttackAt=0
+                end
+                if now-d.at>=12 then
+                    ignored[target]=now+8; target=nil; releaseMotion(); R.state="SEM DANO"
+                    say("Sem queda de vida no alvo. Trocando NPC; confira arma e metodo de ataque.",true); return
+                end
+                local gap=math.min(d.recovered and 1 or R.gap,math.max(0.5,range-1))
+                local point=HUD.rearFarmPoint(part,root,gap,0)
+                R.state="COMBATENDO"; R.targetName=target.Name
+                -- Atualiza a rota sem exigir ficar atras: o NPC pode girar para o jogador.
+                if move(char,root,hum,point,part.Position,part) then
+                    if bodyDistance<=range then R.attackMessage=HUD.tryAttack(target,tool,root,now)
+                    else HUD.releaseAttack(); R.state="APROXIMANDO DO NPC" end
+                    say(string.format("Ilha %d | %s | Vida: %.0f | Distancia: %.1f\n%s",
+                        island.number,target.Name,hp.Health,bodyDistance,R.attackMessage or "Aproximando"))
+                end
+                return
+            end
+        end
+        if goal and not goal.lab then
+            if not goal.part:IsDescendantOf(workspace) then goal=nil; releaseMotion(); return end
+            if (root.Position-goal.point).Magnitude<5 then goal=nil; releaseMotion(); R.state="AGUARDANDO NPCS"
+            else R.state="AVANCANDO ILHA"; move(char,root,hum,goal.point,goal.part.Position) end
+            return
+        end
+        releaseMotion(); R.targetName=nil
+        if navigate and (root.Position-island.part.Position).Magnitude>100 then
+            goal={part=island.part,point=island.part.Position+Vector3.new(0,35,0),island=true}
+            R.state="AVANCANDO ILHA"
+        else R.state="AGUARDANDO NPCS"; say("Ilha "..island.number..": aguardando NPCs ou proxima ilha.") end
+    end
+
+    local elapsed=0
+    HUD.connect(UserInputService.InputBegan,function(input,processed)
+        if not R.hasWork() or processed or UserInputService:GetFocusedTextBox() then return end
+        local key=input.KeyCode.Name
+        if key=="Z" or key=="X" or key=="C" or key=="V" or key=="F" or key=="Q" or key=="R" then
+            skillKeys[key]=true
+            if HUD.raidBusy then releaseMotion(); R.damage=nil end
+        end
+    end)
+    HUD.connect(UserInputService.InputEnded,function(input)
+        if skillKeys[input.KeyCode.Name] then
+            skillKeys[input.KeyCode.Name]=nil
+            if R.hasWork() then HUD.manualHold=math.max(HUD.manualHold,os.clock()+0.5) end
+        end
+    end)
+    HUD.connect(UserInputService.WindowFocusReleased,function()
+        table.clear(skillKeys)
+        if R.hasWork() then releaseMotion(); goal=nil end
+    end)
+    HUD.connect(RunService.Heartbeat,function(dt)
+        if not R.hasWork() then elapsed=0; return end
+        elapsed+=dt; if elapsed<0.1 then return end; elapsed=0
+        local ok,err=pcall(R.tick)
+        if not ok then R.stop("Erro de raid: "..tostring(err):sub(1,140)); HUD.report("Raid",err) end
+    end)
+    HUD.connect(player.CharacterRemoving,function() table.clear(skillKeys); R.stop("Personagem removido; reative a raid apos renascer."); wasActive=false end)
+    gui.Destroying:Connect(function() R.alive=false; commandGeneration+=1; releaseMotion() end)
 end
 
 -- ================= PAINEL / BUSCA / PREFERÊNCIAS V010 =================
@@ -3441,8 +4235,9 @@ do
         elapsed=elapsed+dt
         if elapsed<0.05 then return end
         elapsed=0
+        if HUD.raidBusy then return end
         if HUD.groupAtCursor then HUD.releaseAttack(); HUD.nearTarget=nil; return end
-        if autoFarmEnabled or not HUD.autoNear then HUD.nearTarget=nil; return end
+        if HUD.raidBusy or autoFarmEnabled or not HUD.autoNear then HUD.nearTarget=nil; return end
         HUD.safeActive=emFuga
         if HUD.activity()~="LIVRE" then HUD.releaseAttack(); HUD.progress=nil; return end
         local char=player.Character
@@ -6429,28 +7224,32 @@ do
         table.sort(found,function(a,b) return a.distance<b.distance end)
         return best,distance,count,found
     end
-    local function stop(reason)
-        local old=session
-        session=nil; HUD.fruitBusy=false
+    local function releaseTravel(old)
+        HUD.fruitMoving=false
         if old then
-            if old.tween then old.tween:Cancel() end
-            if old.hold then old.hold:Destroy() end
-            if old.attachment then old.attachment:Destroy() end
+            -- Uma falha no tween nao pode impedir a remocao da forca fisica.
+            if old.tween then pcall(function() old.tween:Cancel() end); old.tween=nil end
+            if old.hold then pcall(function() old.hold:Destroy() end); old.hold=nil end
+            if old.attachment then pcall(function() old.attachment:Destroy() end); old.attachment=nil end
             if old.root.Parent then
-                old.root.AssemblyLinearVelocity=Vector3.zero
-                old.root.AssemblyAngularVelocity=Vector3.zero
+                pcall(function() old.root.AssemblyLinearVelocity=Vector3.zero; old.root.AssemblyAngularVelocity=Vector3.zero end)
             end
             if old.hum.Parent then
-                old.hum.AutoRotate=old.rotate
-                old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated)
+                pcall(function() old.hum.AutoRotate=old.rotate end)
+                pcall(function() old.hum:SetStateEnabled(Enum.HumanoidStateType.Seated,old.seated) end)
             end
             if not HUD.manualNoclip and not HUD.farmMotion then
                 for part,value in pairs(HUD.collisions) do
-                    if part.Parent then part.CanCollide=value end
+                    if part.Parent then pcall(function() part.CanCollide=value end) end
                     HUD.collisions[part]=nil
                 end
             end
         end
+    end
+    local function stop(reason)
+        local old=session
+        session=nil; HUD.fruitBusy=false; HUD.fruitMoving=false
+        if old and not old.released then releaseTravel(old); old.released=true end
         if reason and HUD.alive then HUD.setText(status,reason) end
     end
     HUD.stopFruit=stop
@@ -6466,7 +7265,7 @@ do
         if not root or not hum or hum.Health<=0 or root.Anchored
             or not part or not HUD.isWorldFruit(object) then return false end
         HUD.stopFarmAction()
-        HUD.fruitBusy=true
+        HUD.fruitBusy=true; HUD.fruitMoving=true
         session={object=object,char=char,root=root,hum=hum,rotate=hum.AutoRotate,
             seated=hum:GetStateEnabled(Enum.HumanoidStateType.Seated),
             lastProgress=os.clock(),lastPosition=root.Position,
@@ -6646,6 +7445,15 @@ do
             s.lastPosition=s.root.Position; s.lastProgress=now
         end
         local d=(s.root.Position-part.Position).Magnitude
+        if d<=4 or s.released then
+            if not s.released then releaseTravel(s); s.released=true; s.arrivedAt=now end
+            HUD.setText(status,"Movimento liberado; aguardando coleta pelo jogo...")
+            if now-s.arrivedAt>5 then
+                ignored[s.object]=now+15
+                stop("Movimento liberado; coleta nao confirmada. Recolha manualmente.")
+            end
+            return
+        end
         if d>4 and now-s.lastProgress>5 then
             ignored[s.object]=now+15; stop("Sem deslocamento; alvo ignorado por 15 segundos."); return
         end
@@ -6686,13 +7494,23 @@ do
         if not ok then auto=false; stop("Erro na busca; consulte Sistema."); HUD.report("Frutas",err) end
     end)
     HUD.connect(player.CharacterRemoving,function() stop("Personagem removido; aguardando renascimento.") end)
+    HUD.connect(UserInputService.TextBoxFocused,function()
+        if session then pauseAuto(); stop("Coleta pausada enquanto voce digita.") end
+    end)
+    HUD.connect(UserInputService.InputBegan,function(input,processed)
+        if not session then return end
+        local key=tostring(input.KeyCode):match("([^%.]+)$")
+        if key=="W" or key=="A" or key=="S" or key=="D" or key=="Space" or key=="Q" or key=="R"
+            or key=="Z" or key=="X" or key=="C" or key=="V" or key=="F" then
+            pauseAuto(); stop("Coleta pausada pelo seu comando; personagem liberado.")
+        end
+    end)
     gui.Destroying:Connect(function() auto=false; HUD.fruitStorage.setEnabled(false); stop() end)
 end
 
 
 
 end
-
 end)()({HUD=HUD,player=player,gui=gui,Theme=Theme,RunService=RunService,UserInputService=UserInputService,TweenService=TweenService,roundUI=roundUI,criarBotaoToggle=criarBotaoToggle,criarSlider=criarSlider,criarSecao=criarSecao,createFruitESP=createFruitESP,CancelTeleport=CancelTeleport,TweenTeleport=TweenTeleport,getFruitESP=function() return fruitESPEnabled end,setFruitESP=function(value) fruitESPEnabled=value end})
 end
 -- MODULE END: fruits.lua
@@ -6816,7 +7634,7 @@ loading.step(95,"Finalizando ajustes...")
         if type(saved)~="table" or saved.version~=1 or type(saved.values)~="table" then return false end
         for key,value in pairs(saved.values) do
             local control=HUD.sliders[key]
-            if control and finite(value) then control.set(value) end
+            if control and finite(value) then control.set(key=="PLAYER/Velocidade TP" and 0 or value) end
         end
         if type(saved.keys)=="table" then
             local candidate,seen={},{}
@@ -6858,11 +7676,11 @@ loading.step(95,"Finalizando ajustes...")
             end
             for _,control in ipairs(HUD.toggles) do
                 local value=saved.toggles[control.key]
-                if type(value)=="boolean" then control.set(value,true) end
+                if type(value)=="boolean" then control.set(HUD.restorePassiveToggle(control.key) and value or false,true) end
             end
         end
         if saved.aimMode==false or saved.aimMode=="NPC" or saved.aimMode=="PLAYER" then
-            HUD.restoreAimMode(saved.aimMode)
+            HUD.restoreAimMode(false)
         end
         return true
     end
@@ -6915,7 +7733,7 @@ loading.step(95,"Finalizando ajustes...")
         if dirty and os.clock()>=due then save() end
         local _,description=HUD.activity()
         HUD.setText(activity,description)
-        HUD.setText(diagnostics,HUD.errorText)
+        HUD.setText(diagnostics,HUD.errorText..(HUD.bhopStatus and ("\nBunny Hop: "..HUD.bhopStatus) or ""))
         HUD.setText(storage,HUD.storageText)
         HUD.setText(accentButton,"Cor do HUD: "..(HUD.accent==1 and "Vermelho clássico" or "Rubi"))
         HUD.setText(watchButton,"Observar eventos carregados: "..(HUD.watchEvents and "Sim" or "Não"))
@@ -7032,6 +7850,109 @@ do
     end
     HUD.connect(player.CharacterRemoving,function() HUD.resetCombatExtras() end)
 end
+-- Nenhuma automacao e iniciada por padroes antigos ou preferencias.
+for _,control in ipairs(HUD.toggles) do
+    if not HUD.restorePassiveToggle(control.key) then control.set(false,true) end
+end
+local startupTP=HUD.sliders["PLAYER/Velocidade TP"]
+if startupTP then startupTP.set(0) end
+HUD.restoreAimMode(false)
+-- Encerramento explicito: nao depende da ordem dos eventos Destroying.
+do
+    local closing=false
+    function HUD.shutdown()
+        if closing then return end
+        closing=true; HUD.initialized=false; HUD.alive=false
+        local function attempt(fn)
+            if type(fn)=="function" then
+                local ok,err=pcall(fn)
+                if not ok then warn("[PudimHub / limpeza] "..tostring(err)) end
+            end
+        end
+        attempt(HUD.stopBhop)
+        attempt(function() if HUD.raid then HUD.raid.stop("Hub encerrado.") end end)
+        attempt(function() if HUD.stopChest then HUD.stopChest("Hub encerrado.") end end)
+        attempt(HUD.stopFruit)
+        attempt(HUD.stopFarmAction)
+        attempt(HUD.stopFly)
+        attempt(CancelTeleport)
+        for part,original in pairs(HUD.collisions) do
+            attempt(function() if part.Parent then part.CanCollide=original end end)
+            HUD.collisions[part]=nil
+        end
+        for hum,original in pairs(HUD.jumpOriginals) do
+            attempt(function() if hum.Parent then hum.JumpPower=original.power; hum.UseJumpPower=original.usePower end end)
+        end
+        for _,connection in ipairs(HUD.connections) do attempt(function() connection:Disconnect() end) end
+        table.clear(HUD.connections)
+        for job in pairs(HUD.jobs) do
+            if job~=coroutine.running() then attempt(function() task.cancel(job) end) end
+            HUD.jobs[job]=nil
+        end
+        attempt(function() if gui.Parent then gui:Destroy() end end)
+        if loading.sessionRegistry and loading.sessionRegistry.PudimHubSession==loading.currentSession then
+            loading.sessionRegistry.PudimHubSession=nil
+        end
+    end
+    gui.Destroying:Connect(HUD.shutdown)
+end
+
+do
+    function HUD.movementDiagnostic()
+        local lines={"PudimHub v8 / diagnostico de movimento"}
+        local function add(key,fn)
+            local ok,value=pcall(fn); table.insert(lines,key..": "..(ok and tostring(value) or "indisponivel"))
+        end
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        add("Atividade",function() return HUD.activity() end)
+        for _,key in ipairs({"initialized","raidBusy","fruitBusy","farmMotion","chestBusy","flying","safeActive","bhopActive"}) do
+            add(key,function() return HUD[key]~=nil and HUD[key]~=false end)
+        end
+        add("Raid / estado",function() return HUD.raid and HUD.raid.state end)
+        add("Raid / alvo",function() return HUD.raid and HUD.raid.targetName end)
+        add("Raid / ataque",function() return HUD.raid and HUD.raid.attackMessage end)
+        add("Root ancorado",function() return root.Anchored end)
+        add("Estado",function() return hum:GetState().Name end)
+        for _,key in ipairs({"AutoRotate","PlatformStand","Sit","WalkSpeed","UseJumpPower","JumpPower"}) do
+            add(key,function() return hum[key] end)
+        end
+        for _,key in ipairs({"Busy","Stun","Stunned"}) do
+            add("Jogo / "..key,function()
+                if not char then return "sem personagem" end
+                local value=char:FindFirstChild(key)
+                return value and value:IsA("ValueBase") and value.Value or char:GetAttribute(key)
+            end)
+        end
+        if root then
+            for _,object in ipairs(root:GetChildren()) do
+                if object:IsA("Constraint") or object:IsA("BodyMover") then
+                    table.insert(lines,"Controle fisico: "..object.ClassName.." / "..object.Name)
+                end
+            end
+        end
+        add("Animacoes tocando",function()
+            local animator=hum:FindFirstChildOfClass("Animator")
+            return animator and #animator:GetPlayingAnimationTracks() or 0
+        end)
+        return table.concat(lines,"\n")
+    end
+    local button=Instance.new("TextButton",tabSistema)
+    button.Size=UDim2.new(1,0,0,38); button.BackgroundColor3=Theme.Button
+    button.TextColor3=Theme.Text; button.Font=Enum.Font.GothamMedium; button.TextSize=12
+    button.Text="Copiar diagnostico do personagem"; roundUI(button,8)
+    HUD.connect(button.Activated,function()
+        local text=HUD.movementDiagnostic()
+        if type(setclipboard)=="function" then
+            local ok=pcall(setclipboard,text)
+            button.Text=ok and "Diagnostico copiado" or "Falha ao copiar; veja o console"
+            if not ok then warn(text) end
+        else button.Text="Diagnostico enviado ao console"; warn(text) end
+    end)
+end
+
+HUD.initialized=true
 loading.step(100,"Pronto!")
 if loading.gui.Parent and gui.Parent and HUD.alive then
     gui.Enabled=true
@@ -7039,6 +7960,7 @@ if loading.gui.Parent and gui.Parent and HUD.alive then
 end
 end,debug.traceback)
 if not loaded then
+    if loading.currentSession and loading.currentSession.shutdown then pcall(loading.currentSession.shutdown) end
     if loading.main and loading.main.Parent then loading.main:Destroy() end
     warn("[PudimHub / carregamento] "..tostring(loadError))
     loading.fail()
