@@ -126,7 +126,7 @@ local Theme = {
 	Stroke = Color3.fromRGB(60,60,60)
 
 }
--- Estado de interface e registro dos controles (sem ativar funções ao carregar).
+-- Estado de interface; ativacoes salvas sao restauradas apos carregar o personagem.
 local HUD = {toggles = {}, sliders = {}, jump = 60, scale = 100, status = true, alive = true, connections = {}, collisions = setmetatable({}, {__mode = "k"}), espLoops = {}}
 -- Recursos locais: diagnostico, tarefas cancelaveis e preferencias.
 HUD.favorites = {}
@@ -1074,6 +1074,19 @@ local autoSafeEnabled = false
 local autoSafePercent = 30 -- 30% da sua vida máxima
 local autoSafeHeight = 10000
 local emFuga = false
+-- O estado da fuga pertence a este personagem; a opcao pertence ao perfil.
+HUD.safeState={}
+function HUD.stopSafe()
+    local state=HUD.safeState
+    if state.root and state.root.Parent then
+        state.root.Anchored=state.anchored
+        state.root.AssemblyLinearVelocity=Vector3.zero
+    end
+    HUD.safeState={}
+    emFuga=false; HUD.safeActive=false
+end
+HUD.connect(player.CharacterRemoving,HUD.stopSafe)
+HUD.connect(player.CharacterAdded,HUD.stopSafe)
 -- ================= AUTO FARM VARIÁVEIS =================
 
 local autoFarmEnabled = false
@@ -1576,7 +1589,7 @@ do
             outline.Transparency = 0.3
             outline.Parent = surface
         end
-        local paused = humanoid.Sit or HUD.flying or HUD.travelActive or HUD.seaBusy
+        local paused = humanoid.Sit or HUD.flying or HUD.safeActive or HUD.travelActive or HUD.seaBusy
         floor.CanCollide = not paused
         floor.Position = Vector3.new(root.Position.X, top - thickness / 2, root.Position.Z)
         if surface and surface.Parent then
@@ -1620,7 +1633,7 @@ criarSlider("Velocidade TP",0,10,0,220,tabPlayer,function(v)
 end)
 
 criarSecao("Auto Safe", 270, tabPlayer)
-criarBotaoToggle("Auto Safe", 300, tabPlayer, function(v) autoSafeEnabled = v; if not v then emFuga = false end end)
+criarBotaoToggle("Auto Safe", 300, tabPlayer, function(v) autoSafeEnabled = v; if not v then HUD.stopSafe() end end)
 criarSlider("Limite % Vida", 5, 95, autoSafePercent, 340, tabPlayer, function(v) autoSafePercent = v end)
 criarSlider("Altura Safe", 200, 20000, autoSafeHeight, 410, tabPlayer, function(v) autoSafeHeight = v end)
 -- ================= ESP =================
@@ -2452,29 +2465,52 @@ HUD.connect(RunService.RenderStepped, function(dt)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not hum or not root or hum.Health <= 0 then HUD.stopFarmAction(); return end
+    if not hum or not root or hum.Health <= 0 then HUD.stopSafe(); HUD.stopFarmAction(); return end
 
     if autoSafeEnabled then
-        if hum and hum.Health > 0 then
-            -- CALCULA O LIMITE BASEADO NA SUA VIDA MÁXIMA
-            local limite = hum.MaxHealth * (autoSafePercent / 100)
-
-            if hum.Health >= math.min(hum.MaxHealth,limite+hum.MaxHealth*0.1) and emFuga == true then
-                emFuga = false
-            end
-            if hum.Health <= limite and emFuga == false then
-                emFuga = true
-                if HUD.stopChest then HUD.stopChest("Interrompido pelo Auto Safe.") end
-                CancelTeleport("Viagem interrompida pelo Auto Safe.")
-                if HUD.stopFly then HUD.stopFly() end
-                if root then
-                    root.CFrame = root.CFrame + Vector3.new(0, autoSafeHeight, 0)
+        local now=os.clock()
+        local state=HUD.safeState
+        if state.hum~=hum then
+            HUD.stopSafe()
+            state=HUD.safeState
+            state.hum=hum; state.health=hum.Health; state.lastDamage=now
+            if HUD.safeHealthConnection then HUD.safeHealthConnection:Disconnect() end
+            HUD.safeHealthConnection=HUD.connect(hum.HealthChanged,function(health)
+                if HUD.safeState~=state then return end
+                if health<state.health then
+                    state.lastDamage=os.clock(); state.released=false
                 end
-            end
-        else
-            emFuga = false
+                state.health=health
+                if health<=0 then HUD.stopSafe() end
+            end)
         end
-    end
+        local limit=hum.MaxHealth*(autoSafePercent/100)
+        if hum.Health>=limit then state.released=false end
+        if emFuga and (hum.Health>=limit or now-state.lastDamage>=10) then
+            HUD.stopSafe()
+            -- Nao entrar novamente a cada frame se saiu pelo tempo sem dano.
+            state.root=nil; state.released=true
+            HUD.safeState=state
+        elseif not emFuga and hum.Health<limit and not state.released then
+            if HUD.stopChest then HUD.stopChest("Interrompido pelo Auto Safe.") end
+            if HUD.stopFruit then HUD.stopFruit() end
+            CancelTeleport("Viagem interrompida pelo Auto Safe.")
+            if HUD.stopFly then HUD.stopFly() end
+            HUD.stopFarmAction()
+            if HUD.stopBhop then HUD.stopBhop() end
+            state.root=root; state.anchored=root.Anchored
+            state.origin=root.CFrame; state.height=0
+            state.lastDamage=now
+            emFuga=true; HUD.safeActive=true
+        end
+        if emFuga then
+            state.height=math.min(autoSafeHeight,state.height+1200*math.min(dt,0.1))
+            root.Anchored=true
+            root.AssemblyLinearVelocity=Vector3.zero
+            root.AssemblyAngularVelocity=Vector3.zero
+            root.CFrame=state.origin+Vector3.new(0,state.height,0)
+        end
+    elseif emFuga then HUD.stopSafe() end
 -- ================= AUTO FARM =================
 local now=os.clock()
 HUD.safeActive=emFuga
@@ -2787,6 +2823,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local flying = false
 HUD.flying = false
+HUD.flightWanted = false
 HUD.stopFly = function()
     local wasFlying = flying
     flying, HUD.flying = false, false
@@ -2896,6 +2933,16 @@ local function getFlyRoot()
 	return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 end
 
+function HUD.restoreFlight(value)
+    HUD.flightWanted=value==true
+    if not HUD.flightWanted then HUD.stopFly(); return end
+    if HUD.safeActive or HUD.chestBusy or HUD.travelActive or HUD.seaBusy then return end
+    local char=player.Character
+    local root=char and char:FindFirstChild("HumanoidRootPart")
+    local hum=char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum or hum.Health<=0 then return end
+    flying=true; HUD.flying=true; root.Anchored=true
+end
 -- ================= INPUT =================
 HUD.connect(UserInputService.InputBegan, function(i, gp)
 	if gp then return end
@@ -2906,7 +2953,7 @@ HUD.connect(UserInputService.InputBegan, function(i, gp)
 	end
 
 	-- ALT + CLICK ESQUERDO
-	if altPressed and i.UserInputType == Enum.UserInputType.MouseButton1 and not HUD.seaBusy then
+	if altPressed and i.UserInputType == Enum.UserInputType.MouseButton1 and not HUD.seaBusy and not HUD.safeActive then
         if HUD.chestBusy then HUD.stopChest("Parado para voo. Use Alt + clique novamente."); return end
         local root = getFlyRoot()
         local char = player.Character
@@ -2920,6 +2967,8 @@ HUD.connect(UserInputService.InputBegan, function(i, gp)
         end
         flying = not flying
         HUD.flying = flying
+        HUD.flightWanted=flying
+        if HUD.preferencesChanged then HUD.preferencesChanged() end
         root.Anchored = flying
         if not flying then HUD.clearFlightMarker() end
 	end
@@ -2948,7 +2997,9 @@ end)
 
 -- ================= LOOP DO FLY =================
 HUD.connect(RunService.RenderStepped, function(dt)
-	if not flying or HUD.travelActive or HUD.seaBusy then return end
+	if HUD.safeActive or HUD.travelActive or HUD.seaBusy then return end
+    if not flying and HUD.flightWanted then HUD.restoreFlight(true) end
+    if not flying then return end
 
 	local root = getFlyRoot()
 	if not root then return end
@@ -2985,7 +3036,7 @@ end)
 HUD.connect(player.CharacterAdded, function(char)
 	task.wait(1)
 	local root = char:FindFirstChild("HumanoidRootPart")
-	if root then
+	if root and not HUD.safeActive then
 		root.Anchored = false
 	end
 	flying = false
@@ -3609,7 +3660,7 @@ do
 end
 -- Remove os objetos criados por esta execução ao substituir a interface.
 gui.Destroying:Connect(function()
-    
+    if HUD.flushPreferences then HUD.flushPreferences() end
     local wasFlying = flying
     autoFarmEnabled, flying = false, false
     CancelTeleport()
@@ -7021,7 +7072,7 @@ loading.step(95,"Finalizando ajustes...")
     local writing=false
     local function finite(n) return type(n)=="number" and n==n and math.abs(n)<1e8 end
     function HUD.preferencesChanged()
-        if not ready then return end
+        if not ready or HUD.preferencesClosing or HUD.restoringActivation then return end
         revision=revision+1; dirty=true; due=os.clock()+0.8
     end
     local function snapshot()
@@ -7029,13 +7080,13 @@ loading.step(95,"Finalizando ajustes...")
         for key,control in pairs(HUD.sliders) do values[key]=control.get() end
         for _,control in ipairs(HUD.toggles) do toggles[control.key]=control.get() end
         local p=frame.Position
-        return {version=1,values=values,toggles=toggles,aimMode=HUD.savedAimMode,keys=HUD.keys,favorites=HUD.favorites,
+        return {version=1,values=values,toggles=toggles,aimMode=HUD.savedAimMode,flight=HUD.flightWanted,keys=HUD.keys,favorites=HUD.favorites,
             watchEvents=HUD.watchEvents,status=HUD.status,filter=HUD.farmFilter,accent=HUD.accent,
             attackCategory=HUD.attackCategory,aimFilter=HUD.aimFilter,aimPriority=HUD.aimPriority,
             position={p.X.Scale,p.X.Offset,p.Y.Scale,p.Y.Offset}}
     end
     local function save()
-        if not enabled or not dirty or writing then return end
+        if not enabled or not dirty or writing or HUD.restoringActivation then return end
         writing=true
         local current=revision
         local ok,err=pcall(function() writefile(file,HttpService:JSONEncode(snapshot())) end)
@@ -7044,6 +7095,17 @@ loading.step(95,"Finalizando ajustes...")
         else due=os.clock()+5; HUD.storageText="Falha ao salvar; nova tentativa em 5s."; HUD.report("Arquivo",err) end
     end
     HUD.savePreferences=save
+    function HUD.flushPreferences()
+        if HUD.preferencesClosing then return end
+        if ready and not HUD.restoringActivation then dirty=true; save() end
+        HUD.preferencesClosing=true
+        dirty=false
+    end
+    HUD.connect(player.OnTeleport,function(state)
+        if state==Enum.TeleportState.Started or state==Enum.TeleportState.InProgress then
+            dirty=true; save()
+        end
+    end)
     local function apply(saved)
         if type(saved)~="table" or saved.version~=1 or type(saved.values)~="table" then return false end
         for key,value in pairs(saved.values) do
@@ -7083,6 +7145,15 @@ loading.step(95,"Finalizando ajustes...")
         end
         -- Restaura as ativacoes somente depois de construir todos os modulos.
         HUD.restoreSavedActivation=function()
+            HUD.restoringActivation=true
+            -- Alguns controles iniciam tarefas que exigem personagem vivo.
+            while HUD.alive do
+                local char=player.Character
+                local hum=char and char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health>0 and char:FindFirstChild("HumanoidRootPart") then break end
+                task.wait(0.1)
+            end
+            if not HUD.alive then HUD.restoringActivation=false; return end
             local states=type(saved.toggles)=="table" and saved.toggles or {}
             for _,control in ipairs(HUD.toggles) do
                 local value=states[control.key]
@@ -7094,6 +7165,9 @@ loading.step(95,"Finalizando ajustes...")
             if saved.aimMode==false or saved.aimMode=="NPC" or saved.aimMode=="PLAYER" then
                 HUD.restoreAimMode(saved.aimMode)
             end
+            HUD.restoreFlight(saved.flight==true)
+            HUD.restoringActivation=false
+            HUD.preferencesChanged()
         end
         return true
     end
@@ -7269,6 +7343,7 @@ do
     local closing=false
     function HUD.shutdown()
         if closing then return end
+        if HUD.flushPreferences then HUD.flushPreferences() end
         closing=true; HUD.initialized=false; HUD.alive=false
         local function attempt(fn)
             if type(fn)=="function" then
@@ -7276,6 +7351,7 @@ do
                 if not ok then warn("[PudimHub / limpeza] "..tostring(err)) end
             end
         end
+        attempt(HUD.stopSafe)
         attempt(HUD.stopBhop)
         attempt(function() if HUD.stopChest then HUD.stopChest("Hub encerrado.") end end)
         attempt(HUD.stopFruit)
@@ -7359,7 +7435,7 @@ HUD.initialized=true
 if HUD.restoreSavedActivation then
     local restore=HUD.restoreSavedActivation
     HUD.restoreSavedActivation=nil
-    restore()
+    HUD.startJob(restore)
 end
 loading.step(100,"Pronto!")
 if loading.gui.Parent and gui.Parent and HUD.alive then
