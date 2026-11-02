@@ -1078,15 +1078,54 @@ local emFuga = false
 HUD.safeState={}
 function HUD.stopSafe()
     local state=HUD.safeState
+    if state.drive then state.drive:Destroy(); state.drive=nil end
+    if state.attachment then state.attachment:Destroy(); state.attachment=nil end
     if state.root and state.root.Parent then
-        state.root.Anchored=state.anchored
         state.root.AssemblyLinearVelocity=Vector3.zero
+        state.root.AssemblyAngularVelocity=Vector3.zero
+    end
+    if state.hum and state.hum.Parent and state.rotate~=nil then
+        state.hum.AutoRotate=state.rotate
     end
     HUD.safeState={}
     emFuga=false; HUD.safeActive=false
 end
 HUD.connect(player.CharacterRemoving,HUD.stopSafe)
 HUD.connect(player.CharacterAdded,HUD.stopSafe)
+-- Teleportes curtos antes da fisica, usando a posicao observada em cada passo.
+-- A observacao local detecta recuos; nao confirma a posicao no servidor.
+HUD.connect(RunService.PreSimulation,function()
+    if not emFuga then return end
+    local state=HUD.safeState
+    local root,hum=state.root,state.hum
+    local char=player.Character
+    if not root or not root.Parent or not hum or hum.Health<=0 or root.Parent~=char then
+        HUD.stopSafe(); return
+    end
+    if root.Anchored then
+        HUD.report("Auto Safe","Personagem ancorado por outro controle; fuga interrompida.")
+        HUD.stopSafe(); return
+    end
+    local now=os.clock()
+    if now<state.nextStep then return end
+    state.nextStep=now+0.12
+    local position=root.Position
+    if state.lastTarget and position.Y<state.lastTarget.Y-20 then
+        state.corrections=state.corrections+1
+        state.stepSize=math.max(8,state.stepSize*0.7)
+        if state.corrections>=3 then
+            HUD.report("Auto Safe","Recuos de posicao detectados; passos reduzidos. O servidor pode estar recusando o movimento.")
+        end
+    end
+    local remaining=state.origin.Y+autoSafeHeight-position.Y
+    local rise=math.clamp(remaining,0,state.stepSize)
+    root.AssemblyLinearVelocity=Vector3.zero
+    root.AssemblyAngularVelocity=Vector3.zero
+    if rise>0.05 then
+        char:PivotTo(char:GetPivot()+Vector3.new(0,rise,0))
+    end
+    state.lastTarget=root.Position
+end)
 -- ================= AUTO FARM VARIÁVEIS =================
 
 local autoFarmEnabled = false
@@ -2498,17 +2537,24 @@ HUD.connect(RunService.RenderStepped, function(dt)
             if HUD.stopFly then HUD.stopFly() end
             HUD.stopFarmAction()
             if HUD.stopBhop then HUD.stopBhop() end
-            state.root=root; state.anchored=root.Anchored
-            state.origin=root.CFrame; state.height=0
+            state.root=root
+            state.origin=root.Position; state.nextStep=0; state.stepSize=35
+            state.corrections=0; state.lastTarget=nil
+            state.rotate=hum.AutoRotate; hum.AutoRotate=false; hum.Sit=false
+            -- Ancoragem local impedia a simulacao fisica normal do personagem.
+            root.Anchored=false
+            state.attachment=Instance.new("Attachment")
+            state.attachment.Name="PudimSafeAttachment"; state.attachment.Parent=root
+            state.drive=Instance.new("LinearVelocity")
+            state.drive.Name="PudimSafeHold"
+            state.drive.Attachment0=state.attachment
+            state.drive.RelativeTo=Enum.ActuatorRelativeTo.World
+            state.drive.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector
+            state.drive.ForceLimitsEnabled=false
+            state.drive.VectorVelocity=Vector3.zero
+            state.drive.Parent=root
             state.lastDamage=now
             emFuga=true; HUD.safeActive=true
-        end
-        if emFuga then
-            state.height=math.min(autoSafeHeight,state.height+1200*math.min(dt,0.1))
-            root.Anchored=true
-            root.AssemblyLinearVelocity=Vector3.zero
-            root.AssemblyAngularVelocity=Vector3.zero
-            root.CFrame=state.origin+Vector3.new(0,state.height,0)
         end
     elseif emFuga then HUD.stopSafe() end
 -- ================= AUTO FARM =================
@@ -2594,7 +2640,7 @@ end
     end
 
 
-	if noclip or HUD.farmMotion or HUD.fruitMoving then
+	if noclip or emFuga or HUD.farmMotion or HUD.fruitMoving then
 		for _,v in ipairs(char:GetDescendants()) do
 			if v:IsA("BasePart") then
 				if HUD.collisions[v] == nil then HUD.collisions[v] = v.CanCollide end
@@ -2603,7 +2649,7 @@ end
 		end
 	end
 
-	if not noclip and not HUD.farmMotion and not HUD.fruitMoving then
+	if not noclip and not emFuga and not HUD.farmMotion and not HUD.fruitMoving then
         for part, collision in pairs(HUD.collisions) do
             if part.Parent then part.CanCollide = collision end
             HUD.collisions[part] = nil
