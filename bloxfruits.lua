@@ -1061,7 +1061,6 @@ local floor
 local tpSpeed = 0
 local altPressed = false
 -- ESP
-local espOnlyEnemies = false
 local espObjects = {}
 local boatTransparencyEnabled = false
 local BOAT_TRANSPARENCY = 0.6
@@ -1681,9 +1680,6 @@ criarBotaoToggle("ESP jogadores",30,tabESP,function(v)
 	ESPAtivo = v
 end)
 
-criarBotaoToggle("Só inimigos",70,tabESP,function(v)
-	espOnlyEnemies = v
-end)
 
 -- ================= SISTEMA =================
 criarSecao("SISTEMA",0,tabSistema)
@@ -2659,6 +2655,28 @@ end)
 
 -- ================= ESP SOB DEMANDA =================
 do
+    -- Amizades consultadas fora do Heartbeat; aliancas do Blox Fruits atualizam a cada ciclo.
+    local friends = setmetatable({}, {__mode = "k"})
+    local function isESPFriend(other)
+        local entry = friends[other]
+        if not entry then
+            entry = {value = false, pending = false, retryAt = 0}
+            friends[other] = entry
+        end
+        if not entry.pending and os.clock() >= entry.retryAt then
+            entry.pending = true
+            HUD.startJob(function()
+                local ok, value = pcall(function() return player:IsFriendsWithAsync(other.UserId) end)
+                if HUD.alive and other.Parent == Players then
+                    if ok then entry.value = value == true end
+                    entry.retryAt = os.clock() + (ok and 60 or 15)
+                end
+                entry.pending = false
+            end)
+        end
+        return entry.value
+    end
+    HUD.connect(Players.PlayerRemoving, function(other) friends[other] = nil end)
     local scanToken = 0
     local watched = {}
     local function watchTool(tool)
@@ -2756,8 +2774,10 @@ do
                 local head = char and char:FindFirstChild("Head")
                 local root = char and char:FindFirstChild("HumanoidRootPart")
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
-                local sameTeam = player.Team ~= nil and plr.Team == player.Team
-                local visible = ownRoot and head and root and hum and hum.Health > 0 and (not espOnlyEnemies or not sameTeam)
+                -- Alianca confirmada do Blox Fruits; faccao/time nao define amizade.
+                local allied = plr:HasTag("Ally" .. player.Name) or player:HasTag("Ally" .. plr.Name)
+                local friendly = allied or isESPFriend(plr)
+                local visible = ownRoot and head and root and hum and hum.Health > 0
                 local bill = espObjects[plr]
                 if visible then
                     if not bill then
@@ -2788,7 +2808,9 @@ do
                     end
                     local data = plr:FindFirstChild("Data")
                     local level = data and data:FindFirstChild("Level")
-                    bill.Info.TextColor3 = sameTeam and Color3.fromRGB(0,170,255) or Theme.Red
+                    local marine = plr.Team ~= nil and plr.Team.Name == "Marines"
+                    bill.Info.TextColor3 = friendly and Color3.fromRGB(0,255,0)
+                        or marine and Color3.fromRGB(0,170,255) or Theme.Red
                     bill.Info.Text = plr.Name.."\nHP: "..math.floor(hum.Health).." / LVL: "..(level and tostring(level.Value) or "?").."\n"..math.floor((ownRoot.Position-root.Position).Magnitude).." studs"
                 end
                 if bill then bill.Enabled = not not visible end
