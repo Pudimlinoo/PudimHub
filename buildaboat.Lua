@@ -2521,16 +2521,13 @@ do
     local setUnlimited = toggle(tabMagnet, "Sem limite de distância do jogador", function(value) magnet.unlimited = value end)
     setUnlimited(true)
     local showDepth = numberField(tabMagnet, "Distância do cursor (studs)", 35, 5, 2500, function(value) magnet.depth = value end)
-    local setFixedDepth = toggle(tabMagnet, "Distância fixa no cursor", function(value) magnet.fixedDepth = value end)
-    setFixedDepth(true)
     toggle(tabMagnet, "Movimento por velocidade", function(value) magnet.velocityDrive = value end)
-    control(tabMagnet, "TextLabel", "Telecinese: Q/E aproxima/afasta; roda do mouse ajusta a distância. Vórtice: escolha na aba Ímã jogador.", 64)
+    control(tabMagnet, "TextLabel", "Telecinese: segue o ponto do cursor. Q/E e roda ajustam a distância quando não há superfície na mira.", 64)
     local function cursorControlAllowed()
         return magnet.enabled and magnet.holding and not followsPlayer(magnet.mode)
             and magnet.mode ~= 15 and not farm.enabled and not UserInputService:GetFocusedTextBox()
     end
     local function adjustDepth(delta)
-        setFixedDepth(true)
         local depth = math.clamp(magnet.depth + delta, 5, magnet.unlimited and 2500 or magnet.reach)
         preferences.controls["Ímã/Distância do cursor (studs)"].set(depth)
     end
@@ -2576,7 +2573,7 @@ do
             ["Modo toggle (clique para prender/soltar)"] = false, ["Coleta automática ao redor do jogador"] = false, ["Limite da coleta automática"] = 200,
             ["Alcance máximo (studs)"] = 150, ["Resposta do movimento (%)"] = 100,
             ["Velocidade dos blocos (studs/s)"] = 80,
-            ["Distância do cursor (studs)"] = 35, ["Distância fixa no cursor"] = true, ["Movimento por velocidade"] = false,
+            ["Distância do cursor (studs)"] = 35, ["Movimento por velocidade"] = false,
             ["Altura da formação no jogador"] = 5, ["Velocidade da órbita (graus/s)"] = 70,
             ["Altura do tornado"] = 40,
             ["Espaçamento da linha / parede"] = 6,
@@ -2961,12 +2958,8 @@ do
             local discriminant = projection * projection - (cameraOffset:Dot(cameraOffset) - magnet.reach ^ 2)
             local rayLength = magnet.unlimited and 15000 or (discriminant >= 0 and (-projection + math.sqrt(discriminant)) or 0)
             if rayLength > 0 then
-                local distance = math.min(magnet.depth, rayLength)
-                local hit = workspace:Raycast(ray.Origin, ray.Direction * (magnet.fixedDepth and distance or rayLength), aimParams)
-                if magnet.fixedDepth then
-                    target = ray.Origin + ray.Direction * distance
-                    if hit and not magnet.ghost then target = hit.Position + hit.Normal * clearance end
-                elseif hit then
+                local hit = workspace:Raycast(ray.Origin, ray.Direction * rayLength, aimParams)
+                if hit then
                     -- Mantem espaco entre a formacao e a superficie apontada.
                     target = hit.Position + hit.Normal * clearance
                     magnet.depth = math.clamp(hit.Distance, 5, 2500)
@@ -3615,7 +3608,7 @@ categories(tabMagnet, {
     {"Geral", {"Ativar ímã", "Coleta automática ao redor do jogador", "Limite da coleta automática", "Modo toggle (clique para prender/soltar)", "Modo do ímã", "Soltar todos os blocos"}, true},
     {"Captura", {"Raio de captura (studs)", "Alcance máximo (studs)", "Sem limite de distância do jogador", "Limite de conjuntos de blocos"}, false},
     {"Movimento", {"Resposta do movimento (%)", "Velocidade dos blocos (studs/s)",
-        "Distância do cursor (studs)", "Distância fixa no cursor", "Movimento por velocidade", "Telecinese:", "Atravessar obstáculos"}, false},
+        "Distância do cursor (studs)", "Movimento por velocidade", "Telecinese:", "Atravessar obstáculos"}, false},
     {"Formação e tornado", {"Raio do círculo / órbita", "Altura da formação no jogador",
         "Altura do tornado", "Espaçamento da linha / parede", "Raio da esfera", "Velocidade da órbita (graus/s)"}, false},
     {"Restaurar", {"Resetar opções do ímã"}, false},
